@@ -163,7 +163,7 @@ function parse_struct_def(kind, src, mod, expr)
         #TODO: should we also generate an all-arg constructor like default struct constructors
         # that call convert to the field type for each field?
         # override StructUtils.noarg(::Type{nm}) = true and add outside struct definition
-        push!(ret.args, :(StructUtils.noarg(::Type{<:$T}) = true))
+        push!(ret.args, :(StructUtils.noarg(::StructUtils.StructStyle, ::Type{<:$T}) = true))
         generate_field_defaults_and_tags!(ret, T, fields)
     elseif kind == :kwdef
         if !isempty(fields)
@@ -180,7 +180,7 @@ function parse_struct_def(kind, src, mod, expr)
             end
         end
         # override StructUtils.kwdef(::Type{T}) = true and add outside struct definition
-        push!(ret.args, :(StructUtils.kwdef(::Type{<:$T}) = true))
+        push!(ret.args, :(StructUtils.kwdef(::StructUtils.StructStyle, ::Type{<:$T}) = true))
         generate_field_defaults_and_tags!(ret, T, fields)
     else
         # if any default are specified, ensure all trailing fields have defaults
@@ -207,12 +207,12 @@ function generate_field_defaults_and_tags!(ret, T, fields)
     # generate fielddefaults override if applicable
     if any(f.default !== none for f in fields)
         defs_nt = Expr(:tuple, Expr(:parameters, [:(($(f.name)=$(f.default))) for f in fields if f.default !== none]...))
-        push!(ret.args, :(StructUtils.fielddefaults(::Type{<:$T}) = $defs_nt))
+        push!(ret.args, :(StructUtils.fielddefaults(::StructUtils.StructStyle, ::Type{<:$T}) = $defs_nt))
     end
     # generate fieldtags override if applicable
     if any(f.tags !== none for f in fields)
         tags_nt = Expr(:tuple, Expr(:parameters, [:($(f.name)=$(f.tags)) for f in fields if f.tags !== none]...))
-        push!(ret.args, :(StructUtils.fieldtags(::Type{<:$T}) = $tags_nt))
+        push!(ret.args, :(StructUtils.fieldtags(::StructUtils.StructStyle, ::Type{<:$T}) = $tags_nt))
     end
 end
 

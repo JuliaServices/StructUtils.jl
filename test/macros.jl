@@ -197,10 +197,10 @@ end
     x = NoArg2()
     x.no_type = :hey
     @test x isa NoArg2
-    @test StructUtils.noarg(NoArg2)
-    fd = StructUtils.fielddefaults(NoArg2)
+    @test StructUtils.noarg(StructUtils.DefaultStyle(), NoArg2)
+    fd = StructUtils.fielddefaults(StructUtils.DefaultStyle(), NoArg2)
     @test fd.with_default == 1 && fd.with_type_default == 1 && fd.with_tag_default == 1 && fd.with_tag_type_default == 1 && fd.with_default_atomic == 1 && fd.with_type_default_atomic == 1 && fd.with_tag_default_atomic == 1 && fd.with_tag_type_default_atomic == 1
-    ft = StructUtils.fieldtags(NoArg2)
+    ft = StructUtils.fieldtags(StructUtils.DefaultStyle(), NoArg2)
     @test ft.with_tag == (xml=(key="with-tag",),) && ft.with_tag_type == (xml=(key="with-tag-type",),) && ft.with_tag_default == (xml=(key="with-tag-default",),) && ft.with_tag_type_default == (xml=(key="with-tag-default",),) && ft.with_tag_atomic == (xml=(key="with-tag-atomic",),) && ft.with_tag_type_atomic == (xml=(key="with-tag-type-atomic",),) && ft.with_tag_default_atomic == (xml=(key="with-tag-default-atomic",),) && ft.with_tag_type_default_atomic == (xml=(key="with-tag-default-atomic",),)
 
     @static if VERSION >= v"1.11-DEV"
@@ -220,10 +220,10 @@ end
 
     x = KwDef1(no_type=1, with_type=1, with_tag=1, with_tag_type=1, no_type_atomic=1, with_type_atomic=1, with_tag_atomic=1, with_tag_type_atomic=1, no_type_const=1, with_type_const=1, with_tag_const=1, with_tag_type_const=1)
     @test x.no_type == 1
-    @test StructUtils.kwdef(KwDef1)
-    fd = StructUtils.fielddefaults(KwDef1)
+    @test StructUtils.kwdef(StructUtils.DefaultStyle(), KwDef1)
+    fd = StructUtils.fielddefaults(StructUtils.DefaultStyle(), KwDef1)
     @test fd.with_default == 1 && fd.with_type_default == 1 && fd.with_tag_default == 1 && fd.with_tag_type_default == 1 && fd.with_default_atomic == 1 && fd.with_type_default_atomic == 1 && fd.with_tag_default_atomic == 1 && fd.with_tag_type_default_atomic == 1 && fd.with_default_const == 1 && fd.with_type_default_const == 1 && fd.with_tag_default_const == 1 && fd.with_tag_type_default_const == 1
-    ft = StructUtils.fieldtags(KwDef1)
+    ft = StructUtils.fieldtags(StructUtils.DefaultStyle(), KwDef1)
     @test ft.with_tag == (xml=(key="with-tag",),) && ft.with_tag_type == (xml=(key="with-tag-type",),) && ft.with_tag_default == (xml=(key="with-tag-default",),) && ft.with_tag_type_default == (xml=(key="with-tag-default",),) && ft.with_tag_atomic == (xml=(key="with-tag-atomic",),) && ft.with_tag_type_atomic == (xml=(key="with-tag-type-atomic",),) && ft.with_tag_default_atomic == (xml=(key="with-tag-default-atomic",),) && ft.with_tag_type_default_atomic == (xml=(key="with-tag-default-atomic",),) && ft.with_tag_const == (xml=(key="with-tag-const",),) && ft.with_tag_type_const == (xml=(key="with-tag-type-const",),) && ft.with_tag_default_const == (xml=(key="with-tag-default-const",),) && ft.with_tag_type_default_const == (xml=(key="with-tag-default-const",),)
 
     @test NoFields() isa NoFields
