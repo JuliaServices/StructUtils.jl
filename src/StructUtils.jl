@@ -746,18 +746,27 @@ function maketuple!(f, style, ::Type{T}, source) where {T}
     return st
 end
 
+struct DictSetClosure{T, K}
+    dict::T
+    key::K
+end
+
+function (f::DictSetClosure{T, K})(v) where {T, K}
+    addkeyval!(f.dict, f.key, v)
+end
+
 struct DictClosure{T, S}
     dict::T
     style::S
 end
 
-@inline function (f::DictClosure{T, S})(k, v) where {T, S}
+function (f::DictClosure{T, S})(k, v) where {T, S}
     key = liftkey(f.style, _keytype(f.dict), k)
-    st = make!(x -> addkeyval!(f.dict, key, x), f.style, _valtype(f.dict), v)
+    st = make!(DictSetClosure(f.dict, key), f.style, _valtype(f.dict), v)
     return st
 end
 
-function makedict!(f, style, ::Type{T}, source) where {T}
+@noinline function makedict!(f, style, ::Type{T}, source) where {T}
     dict = initialize(style, T, source)
     st = applyeach(style, DictClosure(dict, style), source)
     f(dict)
