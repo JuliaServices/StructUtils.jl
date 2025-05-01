@@ -203,3 +203,8 @@ end
     id::Int
     @atomic(name::String) = "Jim"
 end
+
+struct Point
+    x::Int
+    y::Int
+end

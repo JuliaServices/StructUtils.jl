@@ -69,7 +69,7 @@ to the constructor, like `t = T(field1=a, field2=b, ...)`. Automatically overloa
 when structs use the `StructUtils.@kwdef` macro in their struct definition. The default value
 is `false` unless explicitly overloaded.
 
-Note that `StructUtils.@kwdef` currently has no relation to `Base.@kwdef`, yet should
+Note that `StructUtils.@kwdef` is a separate implementation of `Base.@kwdef`, yet should
 be a drop-in replacement for it.
 """
 function kwdef end
@@ -98,7 +98,9 @@ end
 
 In this example, when `StructUtils.make` is called on `Foo` with the `MySQLStyle` style,
 only `(name="foo_a",)` will be retrieved from the field tags for `a` because the
-`mysql` key is associated with the `MySQLStyle` struct style.
+`mysql` key is associated with the `MySQLStyle` struct style. In other words, fieldtag keys
+allow custom struct styles to "namespace" field tags so structs can overload specific tags
+in multiple ways for different namespaces, i.e. `a::Int &(mysql=(name="foo_a",), json=(name="json_a",))`.
 """
 function fieldtagkey end
 
@@ -111,6 +113,7 @@ fieldtagkey(::StructStyle) = nothing
 Returns a `NamedTuple` of field tags for the struct `T`. Field tags can be
 added manually by overloading `fieldtags`, or included via convenient syntax
 using the StructUtils.jl macros: `@tags`, `@noarg`, `@defaults`, or `@kwdef`.
+Note this function returns the tags of *all* fields as a single NamedTuple.
 """
 function fieldtags end
 
@@ -214,7 +217,7 @@ implementation returns `true` for `isstructtype(T)` and `!Base.issingletontype(T
 like `T(field1, field2, ...)`.
 
 Due to how `StructUtils.make` works, `structlike` is often overloaded to `false` by "unit"/"atom" types
-where fields should be considered private the `make` process should instead attempt to
+where fields should be considered private to the `make` process and should instead attempt to
 `lift` the `source` object into the `unit` type.
 """
 function structlike end
@@ -270,12 +273,41 @@ function lower(st::StructStyle, x, tags)
 end
 
 """
+    StructUtils.lowerkey(style::StructUtils.StructStyle, x) -> x
+
+Allows customizing how a value is lowered when used specifically as a key.
+By default, calls [`StructUtils.lower`](@ref). Called from [`StructUtils.applyeach`](@ref)
+on the key or index before passed to the key-value function.
+
+### Example
+
+```julia
+struct Point
+    x::Int; y::Int
+end
+
+# lower a Point as a single string value
+StructUtils.lowerkey(::StructUtils.StructStyle, p::Point) = "\$(p.x)_\$(p.y)"
+
+d = Dict(Point(1, 2) => 99)
+
+StructUtils.make(Dict{String, Dict{String, Point}}, Dict(Point(1, 2) => Dict(Point(3, 4) => Point(5, 6))))
+# Dict{String, Dict{String, Point}} with 1 entry:
+#   "1_2" => Dict("3_4"=>Point(5, 6))
+```
+
+For loss-less round-tripping also provide a [`StructUtils.liftkey`](@ref) overload to "lift" the key back.
+"""
+lowerkey(st::StructStyle, x) = lower(st, x)
+
+"""
   StructUtils.lift(::StructStyle, ::Type{T}, x) -> T
 
 Lifts a value `x` to a type `T`. This function is called by `StructUtils.make`
 to lift unit/atom values to the appropriate type. The default implementation is
 the identity function for most types, but it also includes special cases
-for `Symbol`, `Char`, `UUID`, `VersionNumber`, `Regex`, and `TimeType` types.
+for `Symbol`, `Char`, `UUID`, `VersionNumber`, `Regex`, and `TimeType` types to be
+constructed from strings.
 Allows transforming a "domain value" that may be some primitive representation
 into a more complex Julia type.
 """
@@ -312,13 +344,16 @@ function lift(st::StructStyle, ::Type{T}, x, tags) where {T}
     if haskey(tags, :lift)
         return tags.lift(x)
     elseif T <: Dates.TimeType && haskey(tags, :dateformat)
-        return Dates.parse(T, x, tags.dateformat)
+        return parse(T, x, tags.dateformat)
     else
         return lift(st, T, x)
     end
 end
 
 lift(f, st::StructStyle, ::Type{T}, x, tags) where {T} = f(lift(st, T, x, tags))
+
+liftkey(st::StructStyle, ::Type{T}, x) where {T} = lift(st, T, x)
+liftkey(f, st::StructStyle, ::Type{T}, x) where {T} = f(liftkey(st, T, x))
 
 """
     StructUtils.applyeach(style, f, x) -> Union{StructUtils.EarlyReturn, Nothing}
@@ -339,7 +374,7 @@ An example overload of `applyeach` for a generic iterable would be:
 ```julia
 function StructUtils.applyeach(style::StructUtils.StructStyle, f, x::MyIterable)
     for (i, v) in enumerate(x)
-        ret = f(i, StructUtils.lower(style, v))
+        ret = f(StructUtils.lowerkey(style, i), StructUtils.lower(style, v))
         # if `f` returns EarlyReturn, return immediately
         ret isa StructUtils.EarlyReturn && return ret
     end
@@ -349,9 +384,10 @@ end
 
 Note that `applyeach` must include the `style` argument when overloading.
 
-Also note that before applying `f`, the value `v` is passed through `StructUtils.lower(style, v)`.
+Also note that before applying `f`, the key or index is passed through `StructUtils.lowerkey(style, k)`,
+and the value `v` is passed through `StructUtils.lower(style, v)`.
 
-If a value is `#undef` or otherwise not defined, the `f` function should generally be called with `nothing`.
+If a value is `#undef` or otherwise not defined, the `f` function should generally be called with `nothing` or skipped.
 """
 function applyeach end
 
@@ -383,9 +419,9 @@ applyeach(f, st::StructStyle, x) = applyeach(st, f, x)
 function applyeach(st::StructStyle, f, x::AbstractArray)
     for i in eachindex(x)
         ret = if @inbounds(isassigned(x, i))
-            f(i, lower(st, @inbounds(x[i])))
+            f(lowerkey(st, i), lower(st, @inbounds(x[i])))
         else
-            f(i, lower(st, nothing))
+            f(lowerkey(st, i), lower(st, nothing))
         end
         ret isa EarlyReturn && return ret
     end
@@ -395,7 +431,7 @@ end
 # special-case Pair vectors to act like Dicts
 function applyeach(st::StructStyle, f, x::AbstractVector{Pair{K,V}}) where {K,V}
     for (k, v) in x
-        ret = f(k, lower(st, v))
+        ret = f(lowerkey(st, k), lower(st, v))
         ret isa EarlyReturn && return ret
     end
     return
@@ -405,7 +441,7 @@ end
 # can't have #undef values
 function applyeach(st::StructStyle, f, x::Union{AbstractSet,Base.Generator,Core.SimpleVector})
     for (i, v) in enumerate(x)
-        ret = f(i, lower(st, v))
+        ret = f(lowerkey(st, i), lower(st, v))
         ret isa EarlyReturn && return ret
     end
     return
@@ -425,13 +461,13 @@ function applyeach(st::StructStyle, f, x::T) where {T}
                 if !haskey(ftags, :ignore) || !ftags.ignore
                     fname = get(ftags, :name, $fname)
                     ret = if isdefined(x, $i)
-                        f(fname, lower(st, getfield(x, $i), ftags))
+                        f(lowerkey(st, fname), lower(st, getfield(x, $i), ftags))
                     elseif haskey(defs, $fname)
                         # this branch should be really rare because we should
                         # have applied a field default in the struct constructor
-                        f(fname, lower(st, defs[$fname], ftags))
+                        f(lowerkey(st, fname), lower(st, defs[$fname], ftags))
                     else
-                        f(fname, lower(st, nothing, ftags))
+                        f(lowerkey(st, fname), lower(st, nothing, ftags))
                     end
                     ret isa EarlyReturn && return ret
                 end
@@ -447,11 +483,11 @@ function applyeach(st::StructStyle, f, x::T) where {T}
             if !haskey(ftags, :ignore) || !ftags.ignore
                 fname = get(ftags, :name, fname)
                 ret = if isdefined(x, i)
-                    f(fname, lower(st, getfield(x, i), ftags))
+                    f(lowerkey(st, fname), lower(st, getfield(x, i), ftags))
                 elseif haskey(defs, fname)
-                    f(fname, lower(st, defs[fname], ftags))
+                    f(lowerkey(st, fname), lower(st, defs[fname], ftags))
                 else
-                    f(fname, lower(st, nothing, ftags))
+                    f(lowerkey(st, fname), lower(st, nothing, ftags))
                 end
                 ret isa EarlyReturn && return ret
             end
@@ -462,7 +498,7 @@ end
 
 function applyeach(st::StructStyle, f, x::AbstractDict)
     for (k, v) in x
-        ret = f(k, lower(st, v))
+        ret = f(lowerkey(st, k), lower(st, v))
         ret isa EarlyReturn && return ret
     end
     return
@@ -525,6 +561,9 @@ keyeq(x) = y -> keyeq(x, y)
     return
 end
 
+# helper closure that computes the length of an applyeach source
+# note that it should be used sparingly/carefully since it consumes
+# the source object and we generally want to do a single pass
 struct LengthClosure
     len::Ptr{Int}
 end
@@ -585,28 +624,28 @@ end
 
 """
     StructUtils.make(T, source) -> T
-    StructUtils.make(style, T, source) -> T
-    StructUtils.make(f, style, T, source) -> nothing
+    StructUtils.make(T, source, style) -> T
+    StructUtils.make!(f, style, T, source)
     StructUtils.make!(style, x::T, source)
 
 Construct a struct of type `T` from `source` using the given `style`. The `source` can be any
-type of object, and the `style` can be any `StructStyle` subtype.
+type of object, and the `style` can be any `StructStyle` subtype (default `StructUtils.DefaultStyle()`).
 
 `make` will use any knowledge of `noarg`, `arraylike`, or `dictlike` in order to
 determine how to construct an instance of `T`. The fallback for structs is to rely on
-the automatic "all argument" constructor that structs have defined by default.
+the automatic "all argument" constructor that structs have defined by default (e.g. `T(fields...)`).
 
 `make` calls `applyeach` on the `source` object, where the key-value pairs
 from `source` will be used in constructing `T`.
 
 The 3rd definition above allows passing in an "applicator" function that is
 applied to the constructed struct. This is useful when the initial `T` is
-abstract or a union type and `choosetype` is used to determine the concrete
-runtime type to construct.
+abstract or a union type and a `choosetype` field tag or other `StructUtils.make` definition
+is used to determine the concrete runtime type to construct.
 
-The 4th definition allows passing in an already-constructed instance of `T` (`x`),,
+The 4th definition allows passing in an already-constructed instance of `T` (`x`),
 which must be mutable, and source key-value pairs will be applied as
-appropriate to `x`.
+to `x` as source keys are matched to struct field names.
 
 For structs, `fieldtags` will be accounted for and certain tags can be used
 to influence the construction of the struct.
@@ -665,10 +704,7 @@ function make!(f, style::StructStyle, T::Type, source, tags=(;))
     elseif dictlike(style, T)
         dict = initialize(style, T, source)
         st = applyeach(style, source) do k, v
-            KT = _keytype(dict)
-            kref = Ref{KT}()
-            @inline make!(key -> setindex!(kref, key), style, KT, k)
-            key = kref[]
+            key = liftkey(style, _keytype(dict), k)
             st = make!(style, _valtype(dict), v) do val
                 addkeyval!(dict, key, val)
                 return nothing
@@ -725,6 +761,7 @@ function make!(f, style::StructStyle, T::Type, source, tags=(;))
 end
 
 # x is mutable struct of type T or Memory{Any} for struct
+# findfield tries to find the field of a struct that key matches
 function findfield(style, ::Type{T}, x, key::Int, val) where {T}
     _foreach(fieldcount(T)) do i
         if key == i
@@ -765,6 +802,7 @@ end
 
 Base.showerror(io::IO, e::FieldError) = print(io, "StructUtils.FieldError: error while making field `$(e.field)::$(fieldtype(e.T, e.field))` of type `$(e.T)` from `$(e.source)`")
 
+# we matched a field, so store the value/set the field with val
 function applyfield!(style, ::Type{T}, x, i::Int, ftags, val) where {T}
     FT = fieldtype(T, i)
     try
@@ -796,13 +834,12 @@ make!(::Type{T}, source; style::StructStyle=DefaultStyle()) where {T} = make!(st
 function make!(style::StructStyle, x::T, source) where {T}
     if dictlike(style, x)
         st = applyeach(style, source) do k, v
-            nst = Ref{Union{Int, Nothing}}()
-            make!(style, _keytype(x), k) do key
-                nst[] = make!(style, _valtype(x), v) do val
-                    addkeyval!(x, key, val)
-                end
+            key = liftkey(style, _keytype(x), k)
+            st = make!(style, _valtype(x), v) do val
+                addkeyval!(x, key, val)
+                return nothing
             end
-            return nst[]
+            return st
         end
     elseif arraylike(style, x)
         st = applyeach(style, source) do _, v

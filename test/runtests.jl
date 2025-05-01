@@ -188,4 +188,12 @@ println("Multi-dimensional arrays")
 x = StructUtils.make(Matrix{Int}, [[1, 2, 3], [4, 5, 6], [7, 8, 9]])
 @test x == [1 4 7; 2 5 8; 3 6 9]
 
+println("Point")
+@test StructUtils.make(Point, (x=1, y=2)) == Point(1, 2)
+@test StructUtils.make(Dict{Point, Dict{Point, Point}}, Dict(Point(1, 2) => Dict(Point(3, 4) => Point(5, 6)))) == Dict(Point(1, 2) => Dict(Point(3, 4) => Point(5, 6)))
+StructUtils.lowerkey(::StructUtils.StructStyle, p::Point) = "$(p.x)_$(p.y)"
+StructUtils.liftkey(::StructUtils.StructStyle, ::Type{Point}, key::String) = Point(parse(Int, split(key, "_")[1]), parse(Int, split(key, "_")[2]))
+@test StructUtils.make(Dict{Point, Dict{Point, Point}}, Dict("1_2" => Dict("3_4" => Point(5, 6)))) == Dict(Point(1, 2) => Dict(Point(3, 4) => Point(5, 6)))
+@test StructUtils.make(Dict{Point, Dict{Point, Point}}, Dict(Point(1, 2) => Dict(Point(3, 4) => Point(5, 6)))) == Dict(Point(1, 2) => Dict(Point(3, 4) => Point(5, 6)))
+
 end
