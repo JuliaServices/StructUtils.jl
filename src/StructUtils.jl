@@ -352,6 +352,34 @@ end
 
 lift(f, st::StructStyle, ::Type{T}, x, tags) where {T} = f(lift(st, T, x, tags))
 
+"""
+    StructUtils.liftkey(style::StructStyle, ::Type{T}, x) -> x
+
+Allows customizing how a key is lifted before being passed to [`addkeyval!`](@ref)
+in `dictlike` construction.
+
+By default, calls [`StructUtils.lift`](@ref).
+
+### Example
+
+```julia
+struct Point
+    x::Int; y::Int
+end
+
+# lift a Point from a string value
+StructUtils.liftkey(::StructUtils.StructStyle, x::String) = Point(parse(Int, split(x, "_")[1]), parse(Int, split(x, "_")[2]))
+
+d = Dict("1_2" => 99)
+StructUtils.make(Dict{Point, Int}, Dict("1_2" => 99))
+# Dict{Point, Int} with 1 entry:
+#   Point(1, 2) => 99
+```
+
+For loss-less round-tripping also provide a [`StructUtils.lowerkey`](@ref) overload to "lower" the key.
+"""
+function liftkey end
+
 liftkey(st::StructStyle, ::Type{T}, x) where {T} = lift(st, T, x)
 liftkey(f, st::StructStyle, ::Type{T}, x) where {T} = f(liftkey(st, T, x))
 
@@ -686,78 +714,102 @@ function make!(f, style::StructStyle, T::Type, source, tags=(;))
         end
     end
     if T <: Tuple
-        vals = Memory{Any}(undef, fieldcount(T))
-        for i = 1:fieldcount(T)
-            @inbounds vals[i] = nothing
-        end
-        i = Ref{Int}(0)
-        st = applyeach(style, source) do _, v
-            j = i[] += 1
-            if j <= fieldcount(T)
-                FT = fieldtype(T, j)
-                return make!(x -> setindex!(vals, x, j), style, FT, v)
-            end
-            return nothing
-        end
-        f(Tuple(vals))
-        return st
+        return maketuple!(f, style, T, source)
     elseif dictlike(style, T)
-        dict = initialize(style, T, source)
-        st = applyeach(style, source) do k, v
-            key = liftkey(style, _keytype(dict), k)
-            st = make!(style, _valtype(dict), v) do val
-                addkeyval!(dict, key, val)
-                return nothing
-            end
-            return st
-        end
-        f(dict)
-        return st
+        return makedict!(f, style, T, source)
     elseif arraylike(style, T)
-        if ndims(T) > 1
-            # multidimensional arrays
-            x = initialize(style, T, source)
-            n = ndims(T)
-            st = applyeach(style, MultiDimClosure(style, x, ones(Int, n), Ref(n)), source)
-            f(x)
-            return st
-        else
-            arr = T(undef, 0)
-            st = applyeach(style, source) do _, v
-                ET = eltype(arr)
-                return make!(x -> push!(arr, x), style, ET, v)
-            end
-            f(arr)
-            return st
-        end
+        return makearray!(f, style, T, source)
     elseif noarg(style, T)
-        y = initialize(style, T, source)
-        st = applyeach(style, source) do k, v
-            ret = findfield(style, T, y, k, v)
-            ret isa EarlyReturn && return ret.value
-            return nothing
-        end
-        f(y)
-        return st
+        return makenoarg!(f, style, T, source)
     elseif structlike(style, T)
-        fields = Memory{Any}(undef, fieldcount(T))
-        for i = 1:fieldcount(T)
-            @inbounds fields[i] = fielddefault(style, T, fieldname(T, i))
-        end
-        st = applyeach(style, source) do k, v
-            ret = findfield(style, T, fields, k, v)
-            ret isa EarlyReturn && return ret.value
-            return nothing
-        end
-        if T <: NamedTuple
-            f(T(Tuple(fields)))
-        else
-            f(T(fields...))
-        end
-        return st
+        return makestruct!(f, style, T, source)
     else
         return lift(f, style, T, source, tags)
     end
+end
+
+function maketuple!(f, style, ::Type{T}, source) where {T}
+    vals = Memory{Any}(undef, fieldcount(T))
+    for i = 1:fieldcount(T)
+        @inbounds vals[i] = nothing
+    end
+    i = Ref{Int}(0)
+    st = applyeach(style, source) do _, v
+        j = i[] += 1
+        if j <= fieldcount(T)
+            FT = fieldtype(T, j)
+            return make!(x -> setindex!(vals, x, j), style, FT, v)
+        end
+        return nothing
+    end
+    f(Tuple(vals))
+    return st
+end
+
+struct DictClosure{T, S}
+    dict::T
+    style::S
+end
+
+@inline function (f::DictClosure{T, S})(k, v) where {T, S}
+    key = liftkey(f.style, _keytype(f.dict), k)
+    st = make!(x -> addkeyval!(f.dict, key, x), f.style, _valtype(f.dict), v)
+    return st
+end
+
+function makedict!(f, style, ::Type{T}, source) where {T}
+    dict = initialize(style, T, source)
+    st = applyeach(style, DictClosure(dict, style), source)
+    f(dict)
+    return st
+end
+
+function makearray!(f, style, ::Type{T}, source) where {T}
+    if ndims(T) > 1
+        # multidimensional arrays
+        x = initialize(style, T, source)
+        n = ndims(T)
+        st = applyeach(style, MultiDimClosure(style, x, ones(Int, n), Ref(n)), source)
+        f(x)
+        return st
+    else
+        arr = T(undef, 0)
+        st = applyeach(style, source) do _, v
+            ET = eltype(arr)
+            return make!(x -> push!(arr, x), style, ET, v)
+        end
+        f(arr)
+        return st
+    end
+end
+
+function makenoarg!(f, style, ::Type{T}, source) where {T}
+    y = initialize(style, T, source)
+    st = applyeach(style, source) do k, v
+        ret = findfield(style, T, y, k, v)
+        ret isa EarlyReturn && return ret.value
+        return nothing
+    end
+    f(y)
+    return st
+end
+
+function makestruct!(f, style, ::Type{T}, source) where {T}
+    fields = Memory{Any}(undef, fieldcount(T))
+    for i = 1:fieldcount(T)
+        @inbounds fields[i] = fielddefault(style, T, fieldname(T, i))
+    end
+    st = applyeach(style, source) do k, v
+        ret = findfield(style, T, fields, k, v)
+        ret isa EarlyReturn && return ret.value
+        return nothing
+    end
+    if T <: NamedTuple
+        f(T(Tuple(fields)))
+    else
+        f(T(fields...))
+    end
+    return st
 end
 
 # x is mutable struct of type T or Memory{Any} for struct
@@ -863,5 +915,28 @@ make!(style::StructStyle, ::Type{T}, source) where {T} = make!(style, initialize
 @doc (@doc make) make!
 
 include("selectors.jl")
+
+macro choosetype(T, ex)
+    esc(quote
+        StructUtils.make!(f, st::StructUtils.StructStyle, ::Type{$T}, source, tags) =
+            StructUtils.make!(f, st, $(ex)(source), source, tags)
+    end)
+end
+
+macro choosetype(style, T, ex)
+    esc(quote
+        StructUtils.make!(f, st::$(style), ::Type{$T}, source, tags) =
+            StructUtils.make!(f, st, $(ex)(source), source, tags)
+    end)
+end
+
+macro lift(T, ex)
+    esc(quote
+        function StructUtils.lift(st::StructUtils.StructStyle, ::Type{$T}, source, tags)
+            f = $(ex)
+            return applicable(f, source, tags) ? f(source, tags) : f(source)
+        end
+    end)
+end
 
 end

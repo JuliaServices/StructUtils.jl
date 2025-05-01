@@ -196,4 +196,34 @@ StructUtils.liftkey(::StructUtils.StructStyle, ::Type{Point}, key::String) = Poi
 @test StructUtils.make(Dict{Point, Dict{Point, Point}}, Dict("1_2" => Dict("3_4" => Point(5, 6)))) == Dict(Point(1, 2) => Dict(Point(3, 4) => Point(5, 6)))
 @test StructUtils.make(Dict{Point, Dict{Point, Point}}, Dict(Point(1, 2) => Dict(Point(3, 4) => Point(5, 6)))) == Dict(Point(1, 2) => Dict(Point(3, 4) => Point(5, 6)))
 
+# utils
+@test StructUtils.applylength([1, 2, 3]) == 3
+
+@testset "multidimensional make" begin
+    # 2D Int matrix from nested vectors
+    x2 = StructUtils.make(Matrix{Int}, [[1, 3], [2, 4]])
+    @test x2 == [1 2; 3 4]
+
+    # 2D Float64 matrix from singleton inner vectors
+    x2f = StructUtils.make(Matrix{Float64}, [[1.0], [2.0]])
+    m2f = Matrix{Float64}(undef, 1, 2)
+    m2f[1] = 1.0
+    m2f[2] = 2.0
+    @test x2f == m2f
+
+    # 2D Missing matrix
+    xm = StructUtils.make(Matrix{Missing}, [[missing, missing], [missing, missing]])
+    @test isequal(xm, [missing missing; missing missing])
+
+    # 3D Int array
+    # structure: two slabs, each a 2×1 slice
+    x3 = StructUtils.make(Array{Int,3}, [[[1, 2]], [[3, 4]]])
+    exp3 = Array{Int,3}(undef, 2, 1, 2)
+    # fill slice [:, :, 1] from first slab [[1,2]]
+    exp3[:, :, 1] = reshape([1,2], 2, 1)
+    # fill slice [:, :, 2] from second slab [[3,4]]
+    exp3[:, :, 2] = reshape([3,4], 2, 1)
+    @test x3 == exp3
+end
+
 end
