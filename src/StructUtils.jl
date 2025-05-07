@@ -773,7 +773,26 @@ end
     return st
 end
 
-function makearray!(f, style, ::Type{T}, source) where {T}
+struct ArraySetClosure{T, A}
+    arr::T
+    style::A
+end
+
+function (f::ArraySetClosure{T, A})(v) where {T, A}
+    push!(f.arr, v)
+end
+
+struct ArrayClosure{T, A}
+    arr::T
+    style::A
+end
+
+function (f::ArrayClosure{T, A})(_, v) where {T, A}
+    st = make!(ArraySetClosure(f.arr, f.style), f.style, eltype(f.arr), v)
+    return st
+end
+
+@noinline function makearray!(f, style, ::Type{T}, source) where {T}
     if ndims(T) > 1
         # multidimensional arrays
         x = initialize(style, T, source)
@@ -783,16 +802,13 @@ function makearray!(f, style, ::Type{T}, source) where {T}
         return st
     else
         arr = T(undef, 0)
-        st = applyeach(style, source) do _, v
-            ET = eltype(arr)
-            return make!(x -> push!(arr, x), style, ET, v)
-        end
+        st = applyeach(style, ArrayClosure(arr, style), source)
         f(arr)
         return st
     end
 end
 
-function makenoarg!(f, style, ::Type{T}, source) where {T}
+@noinline function makenoarg!(f, style, ::Type{T}, source) where {T}
     y = initialize(style, T, source)
     st = applyeach(style, source) do k, v
         ret = findfield(style, T, y, k, v)
