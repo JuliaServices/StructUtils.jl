@@ -626,8 +626,8 @@ end
 
 function applylength(x)
     ref = Ref(0)
-    lc = LengthClosure(Base.unsafe_convert(Ptr{Int}, ref))
     GC.@preserve ref begin
+        lc = LengthClosure(Base.unsafe_convert(Ptr{Int}, ref))
         StructUtils.applyeach(lc, x)
         return unsafe_load(lc.len)
     end
@@ -988,7 +988,7 @@ function reset!(x::T; style::StructStyle=DefaultStyle()) where {T}
             fname = Meta.quot(fieldname(T, i))
             push!(ex.args, quote
                 if haskey(defs, $fname)
-                    _setfield!(x, $fname, defs[$fname])
+                    _setfield!(x, $i, defs[$fname])
                 end
             end)
         end
@@ -999,7 +999,7 @@ function reset!(x::T; style::StructStyle=DefaultStyle()) where {T}
         for i = 1:fieldcount(T)
             fname = fieldname(T, i)
             if haskey(defs, fname)
-                _setfield!(x, fname, defs[fname])
+                _setfield!(x, i, defs[fname])
             end
         end
         return x
