@@ -4,6 +4,7 @@ struct TestStyle <: StructUtils.StructStyle end
 
 include(joinpath(dirname(pathof(StructUtils)), "../test/macros.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/struct.jl"))
+include(joinpath(dirname(pathof(StructUtils)), "../test/selectors.jl"))
 
 @testset "StructUtils" begin
 
@@ -30,6 +31,9 @@ println("Dict{Symbol, Int}")
 @test StructUtils.make(Dict{Symbol, Int}, t) == Dict(Symbol(1) => 1, Symbol(2) => 2, Symbol(3) => 3, Symbol(4) => 4)
 @test StructUtils.make(Dict{Symbol, Int}, b) == d
 @test StructUtils.make(Dict{Symbol, Int}, bb) == d
+dmut = Dict{Symbol, Int}()
+@test StructUtils.make!(dmut, d) === dmut
+@test dmut == d
 
 println("NamedTuple")
 @test StructUtils.make(typeof(nt), d) == nt
@@ -72,12 +76,10 @@ println("B struct")
 @test StructUtils.make(B, ds) == b
 @test StructUtils.make(B, nt) == b
 @test StructUtils.make(B, a) == b
-@test StructUtils.make(B, vp) == b
-@test StructUtils.make(B, v) == b # relies on order of vector elements
-@test StructUtils.make(B, t) == b # relies on order of tuple elements
-@test StructUtils.make(B, aa) == b # extra field is ignored
-@test StructUtils.make(B, b) == b
 @test StructUtils.make(B, bb) == b
+bmut = B()
+@test StructUtils.make!(bmut, d) === bmut
+@test bmut == b
 
 println("BB struct")
 @test StructUtils.make(BB, d) == bb
@@ -133,6 +135,12 @@ x = StructUtils.make(UndefGuy, (id=1, name="2"))
 @test x.id == 1 && x.name == "2"
 x = StructUtils.make(UndefGuy, (id=1,))
 @test x.id == 1 && !isdefined(x, :name)
+x = UndefGuy()
+@test StructUtils.make!(x, (id=1, name="2")) === x
+@test x.id == 1 && x.name == "2"
+x = UndefGuy()
+@test StructUtils.make!(x, (id=1,)) === x
+@test x.id == 1 && !isdefined(x, :name)
 
 println("E")
 @test StructUtils.make(E, Dict("id" => 1, "a" => (a=1, b=2, c=3, d=4))) == E(1, A(1, 2, 3, 4))
@@ -148,7 +156,8 @@ println("I")
 @test StructUtils.make(I, (id=2, name="Aubrey", fruit=apple)) == I(2, "Aubrey", apple)
 
 println("Vehicle")
-StructUtils.choosetype(::Type{Vehicle}, source) = source["type"] == "car" ? Car : Truck
+StructUtils.@choosetype Vehicle x -> x["type"] == "car" ? Car : x["type"] == "truck" ? Truck : throw(ArgumentError("Unknown vehicle type: $(x["type"])"))
+
 x = StructUtils.make(Vehicle, Dict("type" => "car", "make" => "Toyota", "model" => "Corolla", "seatingCapacity" => 4, "topSpeed" => 120.5))
 @test x == Car("Toyota", "Corolla", 4, 120.5)
 
@@ -168,5 +177,57 @@ println("O")
 println("P")
 p = StructUtils.make(P, (id=0, name="Jane"))
 @test p.id == 0 && p.name == "Jane"
+pmut = P()
+@test StructUtils.make!(pmut, (id=0, name="Jane")) === pmut
+@test pmut.id == 0 && pmut.name == "Jane"
+@test StructUtils.make!(pmut, (id=0, name="Joan", rate=3.14)) === pmut
+@test pmut.id == 0 && pmut.name == "Joan"
+
+println("Multi-dimensional arrays")
+x = StructUtils.make(Matrix{Int}, [[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+@test x == [1 4 7; 2 5 8; 3 6 9]
+
+println("Point")
+@test StructUtils.make(Point, (x=1, y=2)) == Point(1, 2)
+@test StructUtils.make(Dict{Point, Dict{Point, Point}}, Dict(Point(1, 2) => Dict(Point(3, 4) => Point(5, 6)))) == Dict(Point(1, 2) => Dict(Point(3, 4) => Point(5, 6)))
+StructUtils.lowerkey(::StructUtils.StructStyle, p::Point) = "$(p.x)_$(p.y)"
+StructUtils.liftkey(::StructUtils.StructStyle, ::Type{Point}, key::String) = Point(parse(Int, split(key, "_")[1]), parse(Int, split(key, "_")[2]))
+@test StructUtils.make(Dict{Point, Dict{Point, Point}}, Dict("1_2" => Dict("3_4" => Point(5, 6)))) == Dict(Point(1, 2) => Dict(Point(3, 4) => Point(5, 6)))
+@test StructUtils.make(Dict{Point, Dict{Point, Point}}, Dict(Point(1, 2) => Dict(Point(3, 4) => Point(5, 6)))) == Dict(Point(1, 2) => Dict(Point(3, 4) => Point(5, 6)))
+
+# utils
+@test StructUtils.applylength([1, 2, 3]) == 3
+p = P()
+p.id = 1
+@atomic p.name = "Jane"
+StructUtils.reset!(p)
+@test p.name == "Jim"
+
+@testset "multidimensional make" begin
+    # 2D Int matrix from nested vectors
+    x2 = StructUtils.make(Matrix{Int}, [[1, 3], [2, 4]])
+    @test x2 == [1 2; 3 4]
+
+    # 2D Float64 matrix from singleton inner vectors
+    x2f = StructUtils.make(Matrix{Float64}, [[1.0], [2.0]])
+    m2f = Matrix{Float64}(undef, 1, 2)
+    m2f[1] = 1.0
+    m2f[2] = 2.0
+    @test x2f == m2f
+
+    # 2D Missing matrix
+    xm = StructUtils.make(Matrix{Missing}, [[missing, missing], [missing, missing]])
+    @test isequal(xm, [missing missing; missing missing])
+
+    # 3D Int array
+    # structure: two slabs, each a 2×1 slice
+    x3 = StructUtils.make(Array{Int,3}, [[[1, 2]], [[3, 4]]])
+    exp3 = Array{Int,3}(undef, 2, 1, 2)
+    # fill slice [:, :, 1] from first slab [[1,2]]
+    exp3[:, :, 1] = reshape([1,2], 2, 1)
+    # fill slice [:, :, 2] from second slab [[3,4]]
+    exp3[:, :, 2] = reshape([3,4], 2, 1)
+    @test x3 == exp3
+end
 
 end

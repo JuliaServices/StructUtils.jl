@@ -13,7 +13,7 @@ struct AA
     e::Int
 end
 
-StructUtils.fielddefaults(::Type{AA}) = (e=5,)
+StructUtils.fielddefaults(::StructUtils.StructStyle, ::Type{AA}) = (e=5,)
 
 mutable struct B
     a::Int
@@ -23,7 +23,7 @@ mutable struct B
     B() = new()
 end
 
-StructUtils.noarg(::Type{B}) = true
+StructUtils.noarg(::StructUtils.StructStyle, ::Type{B}) = true
 Base.:(==)(b1::B, b2::B) = b1.a == b2.a && b1.b == b2.b && b1.c == b2.c && b1.d == b2.d
 
 Base.@kwdef struct BB
@@ -33,7 +33,7 @@ Base.@kwdef struct BB
     d::Int = 4
 end
 
-StructUtils.kwdef(::Type{BB}) = true
+StructUtils.kwarg(::StructUtils.StructStyle, ::Type{BB}) = true
 
 struct C
 end
@@ -92,7 +92,7 @@ mutable struct UndefGuy
     UndefGuy() = new()
 end
 
-StructUtils.noarg(::Type{UndefGuy}) = true
+StructUtils.noarg(::StructUtils.StructStyle, ::Type{UndefGuy}) = true
 
 struct E
     id::Int
@@ -105,7 +105,7 @@ Base.@kwdef struct F
     name::String
 end
 
-StructUtils.kwdef(::Type{F}) = true
+StructUtils.kwarg(::StructUtils.StructStyle, ::Type{F}) = true
 
 Base.@kwdef struct G
     id::Int
@@ -114,7 +114,7 @@ Base.@kwdef struct G
     f::F
 end
 
-StructUtils.kwdef(::Type{G}) = true
+StructUtils.kwarg(::StructUtils.StructStyle, ::Type{G}) = true
 
 struct H
     id::Int
@@ -149,7 +149,7 @@ end
 struct J
     id::Union{Int, Nothing}
     name::Union{String, Nothing}
-    rate::Union{Int64, Float64}
+    rate::Union{Int, Float64}
 end
 
 struct K
@@ -165,7 +165,7 @@ Base.@kwdef struct System
     shell::Union{Nothing, Dict} = nothing
 end
 
-StructUtils.kwdef(::Type{System}) = true
+StructUtils.kwarg(::StructUtils.StructStyle, ::Type{System}) = true
 
 struct L
     id::Int
@@ -202,4 +202,9 @@ end
 @noarg mutable struct P
     id::Int
     @atomic(name::String) = "Jim"
+end
+
+struct Point
+    x::Int
+    y::Int
 end

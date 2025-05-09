@@ -36,7 +36,7 @@ Documentation for NoArg4
     a::String
 end
 
-StructUtils.@kwdef mutable struct KwDef1
+@kwarg mutable struct KwDef1
     no_type
     with_type::Int
     with_default = 1
@@ -63,32 +63,32 @@ StructUtils.@kwdef mutable struct KwDef1
     const with_tag_type_default_const::Int = 1 &(xml=(key="with-tag-default-const",),)
 end
 
-StructUtils.@kwdef struct NoFields
+@kwarg struct NoFields
 end
 
-StructUtils.@kwdef struct KwDef2{T, S <: IO} <: AbstractNoArg
+@kwarg struct KwDef2{T, S <: IO} <: AbstractNoArg
     a::T = 10 * 20
     io::S
 end
 
 # tests from Base.@kwdef misc.jl
-StructUtils.@kwdef struct Test27970Typed
+@kwarg struct Test27970Typed
     a::Int
     b::String = "hi"
 end
 
-StructUtils.@kwdef struct Test27970Untyped
+@kwarg struct Test27970Untyped
     a
 end
 
-StructUtils.@kwdef struct Test27970Empty end
+@kwarg struct Test27970Empty end
 
 abstract type AbstractTest29307 end
-StructUtils.@kwdef struct Test29307{T<:Integer} <: AbstractTest29307
+@kwarg struct Test29307{T<:Integer} <: AbstractTest29307
     a::T=2
 end
 
-StructUtils.@kwdef struct TestInnerConstructor
+@kwarg struct TestInnerConstructor
     a = 1
     TestInnerConstructor(a::Int) = (@assert a>0; new(a))
     function TestInnerConstructor(a::String)
@@ -98,12 +98,12 @@ StructUtils.@kwdef struct TestInnerConstructor
 end
 
 const outsidevar = 7
-StructUtils.@kwdef struct TestOutsideVar
+@kwarg struct TestOutsideVar
     a::Int=outsidevar
 end
 @test TestOutsideVar() == TestOutsideVar(7)
 
-StructUtils.@kwdef mutable struct Test_kwdef_const_atomic
+@kwarg mutable struct Test_kwdef_const_atomic
     a
     b::Int
     c::Int = 1
@@ -114,7 +114,7 @@ StructUtils.@kwdef mutable struct Test_kwdef_const_atomic
     @atomic h::Int
 end
 
-StructUtils.@kwdef struct Test_kwdef_lineinfo
+@kwarg struct Test_kwdef_lineinfo
     a::String
 end
 # @testset "StructUtils.@kwdef constructor line info" begin
@@ -123,7 +123,7 @@ end
 #         @test ((@__LINE__)-6) ≤ method.line ≤ ((@__LINE__)-5)
 #     end
 # end
-StructUtils.@kwdef struct Test_kwdef_lineinfo_sparam{S<:AbstractString}
+@kwarg struct Test_kwdef_lineinfo_sparam{S<:AbstractString}
     a::S
 end
 # @testset "@kwdef constructor line info with static parameter" begin
@@ -139,7 +139,7 @@ module KwdefWithEsc
     const val1 = 42
     macro define_struct()
         quote
-            StructUtils.@kwdef struct $(esc(:Struct))
+            @kwarg struct $(esc(:Struct))
                 a
                 b = val1
                 c::Int1
@@ -197,10 +197,10 @@ end
     x = NoArg2()
     x.no_type = :hey
     @test x isa NoArg2
-    @test StructUtils.noarg(NoArg2)
-    fd = StructUtils.fielddefaults(NoArg2)
+    @test StructUtils.noarg(StructUtils.DefaultStyle(), NoArg2)
+    fd = StructUtils.fielddefaults(StructUtils.DefaultStyle(), NoArg2)
     @test fd.with_default == 1 && fd.with_type_default == 1 && fd.with_tag_default == 1 && fd.with_tag_type_default == 1 && fd.with_default_atomic == 1 && fd.with_type_default_atomic == 1 && fd.with_tag_default_atomic == 1 && fd.with_tag_type_default_atomic == 1
-    ft = StructUtils.fieldtags(NoArg2)
+    ft = StructUtils.fieldtags(StructUtils.DefaultStyle(), NoArg2)
     @test ft.with_tag == (xml=(key="with-tag",),) && ft.with_tag_type == (xml=(key="with-tag-type",),) && ft.with_tag_default == (xml=(key="with-tag-default",),) && ft.with_tag_type_default == (xml=(key="with-tag-default",),) && ft.with_tag_atomic == (xml=(key="with-tag-atomic",),) && ft.with_tag_type_atomic == (xml=(key="with-tag-type-atomic",),) && ft.with_tag_default_atomic == (xml=(key="with-tag-default-atomic",),) && ft.with_tag_type_default_atomic == (xml=(key="with-tag-default-atomic",),)
 
     @static if VERSION >= v"1.11-DEV"
@@ -220,10 +220,10 @@ end
 
     x = KwDef1(no_type=1, with_type=1, with_tag=1, with_tag_type=1, no_type_atomic=1, with_type_atomic=1, with_tag_atomic=1, with_tag_type_atomic=1, no_type_const=1, with_type_const=1, with_tag_const=1, with_tag_type_const=1)
     @test x.no_type == 1
-    @test StructUtils.kwdef(KwDef1)
-    fd = StructUtils.fielddefaults(KwDef1)
+    @test StructUtils.kwarg(StructUtils.DefaultStyle(), KwDef1)
+    fd = StructUtils.fielddefaults(StructUtils.DefaultStyle(), KwDef1)
     @test fd.with_default == 1 && fd.with_type_default == 1 && fd.with_tag_default == 1 && fd.with_tag_type_default == 1 && fd.with_default_atomic == 1 && fd.with_type_default_atomic == 1 && fd.with_tag_default_atomic == 1 && fd.with_tag_type_default_atomic == 1 && fd.with_default_const == 1 && fd.with_type_default_const == 1 && fd.with_tag_default_const == 1 && fd.with_tag_type_default_const == 1
-    ft = StructUtils.fieldtags(KwDef1)
+    ft = StructUtils.fieldtags(StructUtils.DefaultStyle(), KwDef1)
     @test ft.with_tag == (xml=(key="with-tag",),) && ft.with_tag_type == (xml=(key="with-tag-type",),) && ft.with_tag_default == (xml=(key="with-tag-default",),) && ft.with_tag_type_default == (xml=(key="with-tag-default",),) && ft.with_tag_atomic == (xml=(key="with-tag-atomic",),) && ft.with_tag_type_atomic == (xml=(key="with-tag-type-atomic",),) && ft.with_tag_default_atomic == (xml=(key="with-tag-default-atomic",),) && ft.with_tag_type_default_atomic == (xml=(key="with-tag-default-atomic",),) && ft.with_tag_const == (xml=(key="with-tag-const",),) && ft.with_tag_type_const == (xml=(key="with-tag-type-const",),) && ft.with_tag_default_const == (xml=(key="with-tag-default-const",),) && ft.with_tag_type_default_const == (xml=(key="with-tag-default-const",),)
 
     @test NoFields() isa NoFields

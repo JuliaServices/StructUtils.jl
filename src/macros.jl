@@ -116,6 +116,7 @@ end
 function parse_struct_def(kind, src, mod, expr)
     expr = macroexpand(mod, expr)
     Meta.isexpr(expr, :struct) || throw(ArgumentError("Invalid usage of @$kind macro"))
+    # kind is: :noarg, :kwarg, :defaults, :tags
     ismutable, T, fieldsblock = expr.args
     if Meta.isexpr(T, :<:)
         T = T.args[1]
@@ -131,7 +132,6 @@ function parse_struct_def(kind, src, mod, expr)
         typeparams = T.args[2:end]
         T = T.args[1]
     end
-    # kind is: :noarg, :kwdef, :defaults, :tags
     ret = Expr(:block)
     # we always want to return original struct definition expression
     push!(ret.args, :($Base.@__doc__ $expr))
@@ -163,24 +163,24 @@ function parse_struct_def(kind, src, mod, expr)
         #TODO: should we also generate an all-arg constructor like default struct constructors
         # that call convert to the field type for each field?
         # override StructUtils.noarg(::Type{nm}) = true and add outside struct definition
-        push!(ret.args, :(StructUtils.noarg(::Type{<:$T}) = true))
+        push!(ret.args, :(StructUtils.noarg(::StructUtils.StructStyle, ::Type{<:$T}) = true))
         generate_field_defaults_and_tags!(ret, T, fields)
-    elseif kind == :kwdef
+    elseif kind == :kwarg
         if !isempty(fields)
-            # generate outer kwdef constructor, like: Foo(; a=1, b=2, ...) = Foo(a, b, ...)
+            # generate outer kwarg constructor, like: Foo(; a=1, b=2, ...) = Foo(a, b, ...)
             params = Expr(:parameters, (_kw(fex) for fex in fields)...)
             sig = Expr(:call, T, params)
             fexpr = Expr(:function, sig, Expr(:block, src, :(return $T($((f.name for f in fields)...)))))
             push!(ret.args, fexpr)
             if @isdefined(T_with_typeparams)
-                # generate another kwdef constructor with type parameters
+                # generate another kwarg constructor with type parameters
                 sig = Expr(:where, Expr(:call, T_with_typeparams, params), typeparams...)
                 fexpr = Expr(:function, sig, Expr(:block, src, :(return $T_with_typeparams($((f.name for f in fields)...)))))
                 push!(ret.args, fexpr)
             end
         end
-        # override StructUtils.kwdef(::Type{T}) = true and add outside struct definition
-        push!(ret.args, :(StructUtils.kwdef(::Type{<:$T}) = true))
+        # override StructUtils.kwarg(::Type{T}) = true and add outside struct definition
+        push!(ret.args, :(StructUtils.kwarg(::StructUtils.StructStyle, ::Type{<:$T}) = true))
         generate_field_defaults_and_tags!(ret, T, fields)
     else
         # if any default are specified, ensure all trailing fields have defaults
@@ -207,17 +207,17 @@ function generate_field_defaults_and_tags!(ret, T, fields)
     # generate fielddefaults override if applicable
     if any(f.default !== none for f in fields)
         defs_nt = Expr(:tuple, Expr(:parameters, [:(($(f.name)=$(f.default))) for f in fields if f.default !== none]...))
-        push!(ret.args, :(StructUtils.fielddefaults(::Type{<:$T}) = $defs_nt))
+        push!(ret.args, :(StructUtils.fielddefaults(::StructUtils.StructStyle, ::Type{<:$T}) = $defs_nt))
     end
     # generate fieldtags override if applicable
     if any(f.tags !== none for f in fields)
         tags_nt = Expr(:tuple, Expr(:parameters, [:($(f.name)=$(f.tags)) for f in fields if f.tags !== none]...))
-        push!(ret.args, :(StructUtils.fieldtags(::Type{<:$T}) = $tags_nt))
+        push!(ret.args, :(StructUtils.fieldtags(::StructUtils.StructStyle, ::Type{<:$T}) = $tags_nt))
     end
 end
 
 const SHARED_MACRO_DOCS = """
-The `@noarg`, `@kwdef`, `@defaults`, and `@tags` macros all support
+The `@noarg`, `@kwarg`, `@defaults`, and `@tags` macros all support
 specifying "field tags" for each field in a struct. Field tags are
 a NamedTuple prefixed by `&` and are a way to attach metadata to a field. The
 field tags are accessible via the `StructUtils.fieldtags` function, and certain
@@ -225,7 +225,7 @@ field tags are used by the `StructUtils.make` function to control how fields are
 constructed, including:
   * `dateformat`: a `DateFormat` object to use when parsing or formatting a `Dates.TimeType` field
   * `lower`: a function to apply to a field when `applyeach` is called on a struct
-  * `lift`: a function to apply to a field when `StructUtils.make` is called on for a struct
+  * `lift`: a function to apply to a field when `StructUtils.make` is called on a struct
   * `ignore`: a `Bool` to indicate if a field should be skipped/ignored when `applyeach` or `make` is called
   * `name`: a `Symbol` to be used instead of a defined field name in `applyeach` or used to match a field in `make`
   * `choosetype`: a function to apply to a field when `StructUtils.make` is called to determine the concrete type of an abstract or Union typed field
@@ -245,7 +245,7 @@ end
 
 Macro to enhance a `mutable struct` definition by automatically
 generating an empty or "no-argument" constructor. Similar to the
-`@kwdef` macro, default values can be specified for fields, which will
+`@kwarg` macro, default values can be specified for fields, which will
 be set in the generated constructor. `StructUtils.noarg` trait is also
 overridden to return `true` for the struct type. This allows
 structs to easily participate in programmatic construction via
@@ -280,13 +280,13 @@ macro noarg(expr)
 end
 
 """
-    @kwdef struct T
+    @kwarg struct T
         ...
     end
 
 Macro to enhance a `struct` definition by automatically generating a
 keyword argument constructor. Default values can be specified for fields,
-which will be set in the generated constructor. `StructUtils.kwdef` trait is
+which will be set in the generated constructor. `StructUtils.kwarg` trait is
 also overridden to return `true` for the struct type. This allows structs
 to easily participate in programmatic construction via `StructUtils.make`.
 
@@ -294,7 +294,7 @@ $SHARED_MACRO_DOCS
 
 Example
 ```julia
-@kwdef struct Foo
+@kwarg struct Foo
     a::Int
     b::String = "foo"
     c::Float64 = 1.0
@@ -302,15 +302,15 @@ Example
 end
 ```
 
-In the above example, the `@kwdef` macro generates the following inner constructor:
+In the above example, the `@kwarg` macro generates the following inner constructor:
 ```julia
 function Foo(; a, b="foo", c=1.0, d=[1, 2, 3])
     return Foo(a, b, c, d)
 end
 ```
 """
-macro kwdef(expr)
-    parse_struct_def(:kwdef, __source__, __module__, expr)
+macro kwarg(expr)
+    parse_struct_def(:kwarg, __source__, __module__, expr)
 end
 
 """
