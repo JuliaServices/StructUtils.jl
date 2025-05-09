@@ -559,7 +559,7 @@ function applyeach(st::StructStyle, f, x::AbstractDict)
 end
 
 @static if VERSION < v"1.10"
-    function _isfieldatomic(T::Type, s::Int)
+    function _isfieldatomic(t::Type, s::Int)
         t = Base.unwrap_unionall(t)
         # TODO: what to do for `Union`?
         isa(t, DataType) || return false # uncertain
