@@ -33,7 +33,7 @@ Base.@kwdef struct BB
     d::Int = 4
 end
 
-StructUtils.kwdef(::StructUtils.StructStyle, ::Type{BB}) = true
+StructUtils.kwarg(::StructUtils.StructStyle, ::Type{BB}) = true
 
 struct C
 end
@@ -105,7 +105,7 @@ Base.@kwdef struct F
     name::String
 end
 
-StructUtils.kwdef(::StructUtils.StructStyle, ::Type{F}) = true
+StructUtils.kwarg(::StructUtils.StructStyle, ::Type{F}) = true
 
 Base.@kwdef struct G
     id::Int
@@ -114,7 +114,7 @@ Base.@kwdef struct G
     f::F
 end
 
-StructUtils.kwdef(::StructUtils.StructStyle, ::Type{G}) = true
+StructUtils.kwarg(::StructUtils.StructStyle, ::Type{G}) = true
 
 struct H
     id::Int
@@ -165,7 +165,7 @@ Base.@kwdef struct System
     shell::Union{Nothing, Dict} = nothing
 end
 
-StructUtils.kwdef(::StructUtils.StructStyle, ::Type{System}) = true
+StructUtils.kwarg(::StructUtils.StructStyle, ::Type{System}) = true
 
 struct L
     id::Int

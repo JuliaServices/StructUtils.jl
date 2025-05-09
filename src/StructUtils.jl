@@ -2,7 +2,7 @@ module StructUtils
 
 using Dates, UUIDs
 
-export @noarg, @defaults, @tags, Selectors
+export @noarg, @defaults, @tags, @kwarg, Selectors
 
 """
     StructUtils.StructStyle
@@ -65,23 +65,23 @@ noarg(::StructStyle, T::Type) = noarg(T)
 noarg(T::Type) = false
 
 """
-  StructUtils.kwdef(x) -> Bool
-  StructUtils.kwdef(::StructStyle, x) -> Bool
-  StructUtils.kwdef(::StructStyle, ::Type{T}) -> Bool
+  StructUtils.kwarg(x) -> Bool
+  StructUtils.kwarg(::StructStyle, x) -> Bool
+  StructUtils.kwarg(::StructStyle, ::Type{T}) -> Bool
 
 Signals that `x` or type `T` can be constructed by passing struct fields as keyword arguments
 to the constructor, like `t = T(field1=a, field2=b, ...)`. Automatically overloaded
-when structs use the `StructUtils.@kwdef` macro in their struct definition. The default value
+when structs use the `StructUtils.@kwarg` macro in their struct definition. The default value
 is `false` unless explicitly overloaded.
 
-Note that `StructUtils.@kwdef` is a separate implementation of `Base.@kwdef`, yet should
+Note that `StructUtils.@kwarg` is a separate implementation of `Base.@kwdef`, yet should
 be a drop-in replacement for it.
 """
-function kwdef end
+function kwarg end
 
-kwdef(st::StructStyle, x) = kwdef(st, typeof(x))
-kwdef(::StructStyle, T::Type) = kwdef(T)
-kwdef(T::Type) = false
+kwarg(st::StructStyle, x) = kwarg(st, typeof(x))
+kwarg(::StructStyle, T::Type) = kwarg(T)
+kwarg(T::Type) = false
 
 """
     StructUtils.fieldtagkey(::StructStyle) -> Symbol
@@ -118,7 +118,7 @@ fieldtagkey(::StructStyle) = nothing
 
 Returns a `NamedTuple` of field tags for the struct `T`. Field tags can be
 added manually by overloading `fieldtags`, or included via convenient syntax
-using the StructUtils.jl macros: `@tags`, `@noarg`, `@defaults`, or `@kwdef`.
+using the StructUtils.jl macros: `@tags`, `@noarg`, `@defaults`, or `@kwarg`.
 Note this function returns the tags of *all* fields as a single NamedTuple.
 """
 function fieldtags end
@@ -138,7 +138,7 @@ end
 
 Returns a `NamedTuple` of field defaults for the struct `T`. Field defaults can be
 added manually by overloading `fielddefaults`, or included via convenient syntax
-using the StructUtils.jl macros: `@tags`, `@noarg`, `@defaults`, or `@kwdef`.
+using the StructUtils.jl macros: `@tags`, `@noarg`, `@defaults`, or `@kwarg`.
 """
 function fielddefaults end
 
@@ -314,7 +314,7 @@ StructUtils.make(Dict{String, Dict{String, Point}}, Dict(Point(1, 2) => Dict(Poi
 For loss-less round-tripping also provide a [`StructUtils.liftkey`](@ref) overload to "lift" the key back.
 """
 lowerkey(::StructStyle, x) = lowerkey(x)
-lowerkey(x) = throw(ArgumentError("No key representation for $(typeof(x)). Define StructUtils.lowerkey(::$(typeof(x)))"))
+lowerkey(x) = x
 
 """
   StructUtils.lift(::Type{T}, x) -> T
@@ -331,6 +331,7 @@ into a more complex Julia type.
 function lift end
 
 lift(::Type{Symbol}, x) = Symbol(x)
+lift(::Type{String}, x::Symbol) = String(x)
 lift(::Type{T}, x) where {T} = Base.issingletontype(T) ? T() : convert(T, x)
 lift(::Type{>:Missing}, ::Nothing) = missing
 lift(::Type{>:Nothing}, ::Nothing) = nothing
@@ -967,7 +968,7 @@ make!(style::StructStyle, ::Type{T}, source) where {T} = make!(style, initialize
 """
   StructUtils.reset!(x::T)
 
-If `T` was defined with default values via `@defaults`, `@tags`, `@kwdef`, or `@noarg`,
+If `T` was defined with default values via `@defaults`, `@tags`, `@kwarg`, or `@noarg`,
 `reset!` will reset the fields of `x` to their default values.
 `T` must be a mutable struct type.
 """
