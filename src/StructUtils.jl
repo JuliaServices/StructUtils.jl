@@ -25,6 +25,7 @@ struct DefaultStyle <: StructStyle end
 include("macros.jl")
 
 """
+  StructUtils.dictlike(x) -> Bool
   StructUtils.dictlike(::StructStyle, x) -> Bool
   StructUtils.dictlike(::StructStyle, ::Type{T}) -> Bool
 
@@ -35,8 +36,9 @@ key-value pair in `source`.
 """
 function dictlike end
 
-dictlike(st::StructStyle, x)::Bool = dictlike(st, typeof(x))
-function dictlike(::StructStyle, T::Type)::Bool
+dictlike(st::StructStyle, x) = dictlike(st, typeof(x))
+dictlike(::StructStyle, T::Type) = dictlike(T)
+function dictlike(T::Type)
     if T <: AbstractDict
         return true
     elseif T <: AbstractVector{<:Pair}
@@ -47,6 +49,7 @@ function dictlike(::StructStyle, T::Type)::Bool
 end
 
 """
+  StructUtils.noarg(x) -> Bool
   StructUtils.noarg(::StructStyle, x) -> Bool
   StructUtils.noarg(::StructStyle, ::Type{T}) -> Bool
 
@@ -57,10 +60,12 @@ explicitly overloaded.
 """
 function noarg end
 
-noarg(st::StructStyle, x)::Bool = noarg(st, typeof(x))
-noarg(::StructStyle, T::Type)::Bool = false
+noarg(st::StructStyle, x) = noarg(st, typeof(x))
+noarg(::StructStyle, T::Type) = noarg(T)
+noarg(T::Type) = false
 
 """
+  StructUtils.kwdef(x) -> Bool
   StructUtils.kwdef(::StructStyle, x) -> Bool
   StructUtils.kwdef(::StructStyle, ::Type{T}) -> Bool
 
@@ -74,8 +79,9 @@ be a drop-in replacement for it.
 """
 function kwdef end
 
-kwdef(::StructStyle, T::Type)::Bool = false
-kwdef(st::StructStyle, x)::Bool = kwdef(st, typeof(x))
+kwdef(st::StructStyle, x) = kwdef(st, typeof(x))
+kwdef(::StructStyle, T::Type) = kwdef(T)
+kwdef(T::Type) = false
 
 """
     StructUtils.fieldtagkey(::StructStyle) -> Symbol
@@ -181,6 +187,7 @@ _valtype(d) = valtype(d)
 _valtype(::AbstractVector{Pair{A,B}}) where {A,B} = B
 
 """
+  StructUtils.arraylike(x) -> Bool
   StructUtils.arraylike(::StructStyle, x) -> Bool
   StructUtils.arraylike(::StructStyle, ::Type{T}) -> Bool
 
@@ -194,8 +201,9 @@ to the array-like object.
 """
 function arraylike end
 
-arraylike(st::StructStyle, x)::Bool = arraylike(st, typeof(x))
-function arraylike(::StructStyle, T::Type)::Bool
+arraylike(st::StructStyle, x) = arraylike(st, typeof(x))
+arraylike(::StructStyle, T::Type) = arraylike(T)
+function arraylike(T::Type)
     if T <: AbstractArray && ndims(T) == 0
         return false
     elseif T <: AbstractArray || T <: AbstractSet || T <: Tuple || T <: Base.Generator || T <: Core.SimpleVector
@@ -206,6 +214,7 @@ function arraylike(::StructStyle, T::Type)::Bool
 end
 
 """
+  StructUtils.structlike(x) -> Bool
   StructUtils.structlike(::StructStyle, x) -> Bool
   StructUtils.structlike(::StructStyle, ::Type{T}) -> Bool
 
@@ -222,8 +231,9 @@ where fields should be considered private to the `make` process and should inste
 """
 function structlike end
 
-structlike(st::StructStyle, x)::Bool = structlike(st, typeof(x))
-function structlike(::StructStyle, T::Type)::Bool
+structlike(st::StructStyle, x) = structlike(st, typeof(x))
+structlike(::StructStyle, T::Type) = structlike(T)
+function structlike(T::Type)
     if T <: Function || T <: Module || (T <: AbstractArray && ndims(T) == 0) ||
        T <: AbstractChar || T <: AbstractString || T == Symbol || T == Regex || T <: Dates.TimeType ||
        T <: Number || T == Nothing || T == Missing || T == UUID || T == VersionNumber
@@ -236,6 +246,7 @@ function structlike(::StructStyle, T::Type)::Bool
 end
 
 """
+  StructUtils.nulllike(x) -> Bool
   StructUtils.nulllike(::StructStyle, x) -> Bool
   StructUtils.nulllike(::StructStyle, ::Type{T}) -> Bool
 
@@ -245,10 +256,12 @@ mainly used in the `make!` implementation to determine if a
 """
 function nulllike end
 
-nulllike(::StructStyle, T::Type)::Bool = T === Missing || T === Nothing
-nulllike(st::StructStyle, x)::Bool = nulllike(st, typeof(x))
+nulllike(st::StructStyle, x) = nulllike(st, typeof(x))
+nulllike(::StructStyle, T::Type) = nulllike(T)
+nulllike(T::Type) = T === Missing || T === Nothing
 
 """
+  StructUtils.lower(x) -> x
   StructUtils.lower(::StructStyle, x) -> x
 
 Domain value transformation function. This function is called by
@@ -259,7 +272,8 @@ style used.
 """
 function lower end
 
-lower(::StructStyle, x) = x
+lower(::StructStyle, x) = lower(x)
+lower(x) = x
 
 function lower(st::StructStyle, x, tags)
     # there are a few builtin tags supported
@@ -273,7 +287,8 @@ function lower(st::StructStyle, x, tags)
 end
 
 """
-    StructUtils.lowerkey(style::StructUtils.StructStyle, x) -> x
+  StructUtils.lowerkey(x) -> x
+  StructUtils.lowerkey(style::StructUtils.StructStyle, x) -> x
 
 Allows customizing how a value is lowered when used specifically as a key.
 By default, calls [`StructUtils.lower`](@ref). Called from [`StructUtils.applyeach`](@ref)
@@ -298,9 +313,11 @@ StructUtils.make(Dict{String, Dict{String, Point}}, Dict(Point(1, 2) => Dict(Poi
 
 For loss-less round-tripping also provide a [`StructUtils.liftkey`](@ref) overload to "lift" the key back.
 """
-lowerkey(st::StructStyle, x) = lower(st, x)
+lowerkey(::StructStyle, x) = lowerkey(x)
+lowerkey(x) = throw(ArgumentError("No key representation for $(typeof(x)). Define StructUtils.lowerkey(::$(typeof(x)))"))
 
 """
+  StructUtils.lift(::Type{T}, x) -> T
   StructUtils.lift(::StructStyle, ::Type{T}, x) -> T
 
 Lifts a value `x` to a type `T`. This function is called by `StructUtils.make`
@@ -313,25 +330,27 @@ into a more complex Julia type.
 """
 function lift end
 
-lift(::StructStyle, ::Type{Symbol}, x) = Symbol(x)
-lift(::StructStyle, ::Type{T}, x) where {T} = Base.issingletontype(T) ? T() : convert(T, x)
-lift(::StructStyle, ::Type{>:Missing}, ::Nothing) = missing
-lift(::StructStyle, ::Type{>:Nothing}, ::Nothing) = nothing
-lift(::StructStyle, ::Type{>:Union{Missing,Nothing}}, ::Nothing) = nothing
-lift(::StructStyle, ::Type{>:Union{Missing,Nothing}}, ::Missing) = missing
-lift(::StructStyle, ::Type{Char}, x::AbstractString) = length(x) == 1 ? x[1] : throw(ArgumentError("expected single character, got $x"))
-lift(::StructStyle, ::Type{UUID}, x::AbstractString) = UUID(x)
-lift(::StructStyle, ::Type{VersionNumber}, x::AbstractString) = VersionNumber(x)
-lift(::StructStyle, ::Type{Regex}, x::AbstractString) = Regex(x)
-lift(::StructStyle, ::Type{T}, x::AbstractString) where {T<:Dates.TimeType} = T(x)
+lift(::Type{Symbol}, x) = Symbol(x)
+lift(::Type{T}, x) where {T} = Base.issingletontype(T) ? T() : convert(T, x)
+lift(::Type{>:Missing}, ::Nothing) = missing
+lift(::Type{>:Nothing}, ::Nothing) = nothing
+lift(::Type{>:Union{Missing,Nothing}}, ::Nothing) = nothing
+lift(::Type{>:Union{Missing,Nothing}}, ::Missing) = missing
+lift(::Type{Char}, x::AbstractString) = length(x) == 1 ? x[1] : throw(ArgumentError("expected single character, got $x"))
+lift(::Type{UUID}, x::AbstractString) = UUID(x)
+lift(::Type{VersionNumber}, x::AbstractString) = VersionNumber(x)
+lift(::Type{Regex}, x::AbstractString) = Regex(x)
+lift(::Type{T}, x::AbstractString) where {T<:Dates.TimeType} = T(x)
 
-function lift(::StructStyle, ::Type{T}, x::AbstractString) where {T <: Enum}
+function lift(::Type{T}, x::AbstractString) where {T <: Enum}
     sym = Symbol(x)
     for (k, v) in Base.Enums.namemap(T)
         v === sym && return T(k)
     end
     throw(ArgumentError("invalid `$T` string value: \"$sym\""))
 end
+
+lift(::StructStyle, ::Type{T}, x) where {T} = lift(T, x)
 
 # bit of an odd case, but support 0-dimensional array lifting from scalar value
 function lift(st::StructStyle, ::Type{A}, x) where {A<:AbstractArray{T,0}} where {T}
@@ -344,7 +363,11 @@ function lift(st::StructStyle, ::Type{T}, x, tags) where {T}
     if haskey(tags, :lift)
         return tags.lift(x)
     elseif T <: Dates.TimeType && haskey(tags, :dateformat)
-        return parse(T, x, tags.dateformat)
+        if tags.dateformat isa String
+            return parse(T, x, Dates.DateFormat(tags.dateformat))
+        else
+            return parse(T, x, tags.dateformat)
+        end
     else
         return lift(st, T, x)
     end
@@ -353,7 +376,8 @@ end
 lift(f, st::StructStyle, ::Type{T}, x, tags) where {T} = f(lift(st, T, x, tags))
 
 """
-    StructUtils.liftkey(style::StructStyle, ::Type{T}, x) -> x
+  StructUtils.liftkey(::Type{T}, x) -> x
+  StructUtils.liftkey(style::StructStyle, ::Type{T}, x) -> x
 
 Allows customizing how a key is lifted before being passed to [`addkeyval!`](@ref)
 in `dictlike` construction.
@@ -380,7 +404,8 @@ For loss-less round-tripping also provide a [`StructUtils.lowerkey`](@ref) overl
 """
 function liftkey end
 
-liftkey(st::StructStyle, ::Type{T}, x) where {T} = lift(st, T, x)
+liftkey(st::StructStyle, ::Type{T}, x) where {T} = liftkey(T, x)
+liftkey(::Type{T}, x) where {T} = lift(T, x)
 liftkey(f, st::StructStyle, ::Type{T}, x) where {T} = f(liftkey(st, T, x))
 
 """
@@ -939,27 +964,96 @@ make!(style::StructStyle, ::Type{T}, source) where {T} = make!(style, initialize
 
 @doc (@doc make) make!
 
+"""
+  StructUtils.reset!(x::T)
+
+If `T` was defined with default values via `@defaults`, `@tags`, `@kwdef`, or `@noarg`,
+`reset!` will reset the fields of `x` to their default values.
+`T` must be a mutable struct type.
+"""
+function reset!(x::T; style::StructStyle=DefaultStyle()) where {T}
+    if @generated
+        N = fieldcount(T)
+        ex = quote
+            defs = fielddefaults(style, T)
+        end
+        for i = 1:N
+            fname = Meta.quot(fieldname(T, i))
+            push!(ex.args, quote
+                if haskey(defs, $fname)
+                    _setfield!(x, $fname, defs[$fname])
+                end
+            end)
+        end
+        push!(ex.args, :(return x))
+        return ex
+    else
+        defs = fielddefaults(style, T)
+        for i = 1:fieldcount(T)
+            fname = fieldname(T, i)
+            if haskey(defs, fname)
+                _setfield!(x, fname, defs[fname])
+            end
+        end
+        return x
+    end
+end
+
 include("selectors.jl")
 
+"""
+    StructUtils.@choosetype T func
+    StructUtils.@choosetype style T func
+
+Convenience macro for defining a `StructUtils.make!` overload for an abstract type `T` where
+`func` is a function that "chooses" a concrete type `S` at runtime. `func` can be one of two forms:
+  * `source -> S`
+  * `(source, tags) -> S)`
+
+That is, it either takes just the `source` object that is passed to `make` and must choose a concrete
+type `S`, or it can take both the `source` and a set of fieldtags that may be present for the field
+of a type being "made".
+
+The 2nd definition also takes a `style` argument, allowing for overloads of non-owned types `T`.
+
+Example:
+
+```julia
+abstract type Vehicle end
+
+struct Car <: Vehicle
+    make::String
+    model::String
+    seatingCapacity::Int
+    topSpeed::Float64
+end
+
+struct Truck <: Vehicle
+    make::String
+    model::String
+    payloadCapacity::Float64
+end
+
+StructUtils.@choosetype Vehicle x -> x["type"] == "car" ? Car : x["type"] == "truck" ? Truck : throw(ArgumentError("Unknown vehicle type: \$(x["type"])"))
+
+x = StructUtils.make(Vehicle, Dict("type" => "car", "make" => "Toyota", "model" => "Corolla", "seatingCapacity" => 4, "topSpeed" => 120.5))
+@test x == Car("Toyota", "Corolla", 4, 120.5)
+```
+"""
 macro choosetype(T, ex)
     esc(quote
-        StructUtils.make!(f, st::StructUtils.StructStyle, ::Type{$T}, source, tags) =
-            StructUtils.make!(f, st, $(ex)(source), source, tags)
+        function StructUtils.make!(f, st::StructUtils.StructStyle, ::Type{$T}, source, tags)
+            func = $(ex)
+            StructUtils.make!(f, st, applicable(func, source, tags) ? func(source, tags) : func(source), source, tags)
+        end
     end)
 end
 
 macro choosetype(style, T, ex)
     esc(quote
-        StructUtils.make!(f, st::$(style), ::Type{$T}, source, tags) =
-            StructUtils.make!(f, st, $(ex)(source), source, tags)
-    end)
-end
-
-macro lift(T, ex)
-    esc(quote
-        function StructUtils.lift(st::StructUtils.StructStyle, ::Type{$T}, source, tags)
-            f = $(ex)
-            return applicable(f, source, tags) ? f(source, tags) : f(source)
+        function StructUtils.make!(f, st::$(style), ::Type{$T}, source, tags)
+            func = $(ex)
+            StructUtils.make!(f, st, applicable(func, source, tags) ? func(source, tags) : func(source), source, tags)
         end
     end)
 end

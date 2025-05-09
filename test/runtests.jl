@@ -156,8 +156,7 @@ println("I")
 @test StructUtils.make(I, (id=2, name="Aubrey", fruit=apple)) == I(2, "Aubrey", apple)
 
 println("Vehicle")
-StructUtils.make!(f, style::StructUtils.StructStyle, ::Type{Vehicle}, source) =
-    StructUtils.make!(f, style, source["type"] == "car" ? Car : source["type"] == "truck" ? Truck : throw(ArgumentError("Unknown vehicle type: $(source["type"])")), source)
+StructUtils.@choosetype Vehicle x -> x["type"] == "car" ? Car : x["type"] == "truck" ? Truck : throw(ArgumentError("Unknown vehicle type: $(x["type"])"))
 
 x = StructUtils.make(Vehicle, Dict("type" => "car", "make" => "Toyota", "model" => "Corolla", "seatingCapacity" => 4, "topSpeed" => 120.5))
 @test x == Car("Toyota", "Corolla", 4, 120.5)
@@ -198,6 +197,11 @@ StructUtils.liftkey(::StructUtils.StructStyle, ::Type{Point}, key::String) = Poi
 
 # utils
 @test StructUtils.applylength([1, 2, 3]) == 3
+p = P()
+p.id = 1
+@atomic p.name = "Jane"
+StructUtils.reset!(p)
+@test p.name == "Jim"
 
 @testset "multidimensional make" begin
     # 2D Int matrix from nested vectors

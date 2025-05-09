@@ -225,7 +225,7 @@ field tags are used by the `StructUtils.make` function to control how fields are
 constructed, including:
   * `dateformat`: a `DateFormat` object to use when parsing or formatting a `Dates.TimeType` field
   * `lower`: a function to apply to a field when `applyeach` is called on a struct
-  * `lift`: a function to apply to a field when `StructUtils.make` is called on for a struct
+  * `lift`: a function to apply to a field when `StructUtils.make` is called on a struct
   * `ignore`: a `Bool` to indicate if a field should be skipped/ignored when `applyeach` or `make` is called
   * `name`: a `Symbol` to be used instead of a defined field name in `applyeach` or used to match a field in `make`
   * `choosetype`: a function to apply to a field when `StructUtils.make` is called to determine the concrete type of an abstract or Union typed field
