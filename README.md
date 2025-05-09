@@ -12,8 +12,8 @@ The package is registered in the [`General`](https://github.com/JuliaRegistries/
 
 ## Documentation
 
-- [**STABLE**][https://juliaservices.github.io/StructUtils.jl/stable] &mdash; **most recently tagged version of the documentation.**
-- [**LATEST**][https://juliaservices.github.io/StructUtils.jl/latest] &mdash; *in-development version of the documentation.*
+- [**STABLE**](https://juliaservices.github.io/StructUtils.jl/stable) &mdash; **most recently tagged version of the documentation.**
+- [**LATEST**](https://juliaservices.github.io/StructUtils.jl/latest) &mdash; *in-development version of the documentation.*
 
 ## Basic Usage
 
