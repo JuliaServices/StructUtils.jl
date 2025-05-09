@@ -618,6 +618,17 @@ end
 # helper closure that computes the length of an applyeach source
 # note that it should be used sparingly/carefully since it consumes
 # the source object and we generally want to do a single pass
+if VERSION < v"1.10"
+mutable struct LengthClosure
+    len::Int
+end
+(f::LengthClosure)(_, _) = f.len += 1
+function applylength(x)
+    lc = LengthClosure(0)
+    StructUtils.applyeach(lc, x)
+    return lc.len
+end
+else
 struct LengthClosure
     len::Ptr{Int}
 end
@@ -632,6 +643,7 @@ function applylength(x)
         return unsafe_load(lc.len)
     end
 end
+end # VERSION < v"1.10"
 
 # recursively build up multidimensional array dimensions
 # "[[1.0],[2.0]]" => (1, 2)
