@@ -149,7 +149,7 @@ end
 struct J
     id::Union{Int, Nothing}
     name::Union{String, Nothing}
-    rate::Union{Int64, Float64}
+    rate::Union{Int, Float64}
 end
 
 struct K

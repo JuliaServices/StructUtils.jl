@@ -22,8 +22,6 @@ jobs:
           - ubuntu-latest
           - macOS-latest
           - windows-latest
-        arch:
-          - x64
         include:
           - os: windows-latest
             version: '1'

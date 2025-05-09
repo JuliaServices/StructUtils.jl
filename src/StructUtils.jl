@@ -754,8 +754,14 @@ function make!(f, style::StructStyle, T::Type, source, tags=(;))
     end
 end
 
+if VERSION < v"1.11"
+    mem(n) = Vector{Any}(undef, n)
+else
+    mem(n) = Memory{Any}(undef, n)
+end
+
 function maketuple!(f, style, ::Type{T}, source) where {T}
-    vals = Memory{Any}(undef, fieldcount(T))
+    vals = mem(fieldcount(T))
     for i = 1:fieldcount(T)
         @inbounds vals[i] = nothing
     end
@@ -846,7 +852,7 @@ end
 end
 
 function makestruct!(f, style, ::Type{T}, source) where {T}
-    fields = Memory{Any}(undef, fieldcount(T))
+    fields = mem(fieldcount(T))
     for i = 1:fieldcount(T)
         @inbounds fields[i] = fielddefault(style, T, fieldname(T, i))
     end

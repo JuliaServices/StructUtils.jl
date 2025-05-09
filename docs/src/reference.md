@@ -4,5 +4,5 @@
 ```
 
 ```@autodocs
-Modules = [StructUtils]
+Modules = [StructUtils, StructUtils.Selectors]
 ```
