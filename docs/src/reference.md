@@ -4,5 +4,5 @@
 ```
 
 ```@autodocs
-Modules = [StructUtils.jl]
+Modules = [StructUtils]
 ```
