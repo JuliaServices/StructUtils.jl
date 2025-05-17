@@ -129,7 +129,7 @@ function fieldtags(st::StructStyle, T::Type, field)
     ft = fieldtags(st, T)
     fft = get(() -> (;), ft, field)
     ftk = fieldtagkey(st)
-    return ftk === nothing ? fft : get(() -> (;), fft, ftk)
+    return ftk === nothing ? fft : get(fft, ftk, fft)
 end
 
 """
