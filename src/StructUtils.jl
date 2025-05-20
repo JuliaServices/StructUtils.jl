@@ -754,11 +754,11 @@ function make!(f, style::StructStyle, T::Type, source, tags=(;))
     if T <: Tuple
         return maketuple!(f, style, T, source)
     elseif dictlike(style, T)
-        return makedict!(f, style, T, source)
+        return makedict!(f, style, initialize(style, T, source), source)
     elseif arraylike(style, T)
-        return makearray!(f, style, T, source)
+        return makearray!(f, style, initialize(style, T, source), source)
     elseif noarg(style, T)
-        return makenoarg!(f, style, T, source)
+        return makenoarg!(f, style, initialize(style, T, source), source)
     elseif structlike(style, T)
         return makestruct!(f, style, T, source)
     else
@@ -810,8 +810,7 @@ function (f::DictClosure{T, S})(k, v) where {T, S}
     return st
 end
 
-@noinline function makedict!(f, style, ::Type{T}, source) where {T}
-    dict = initialize(style, T, source)
+@noinline function makedict!(f, style, dict, source)
     st = applyeach(style, DictClosure(dict, style), source)
     f(dict)
     return st
@@ -836,24 +835,21 @@ function (f::ArrayClosure{T, A})(_, v) where {T, A}
     return st
 end
 
-@noinline function makearray!(f, style, ::Type{T}, source) where {T}
+@noinline function makearray!(f, style, x::T, source) where {T}
     if ndims(T) > 1
         # multidimensional arrays
-        x = initialize(style, T, source)
         n = ndims(T)
         st = applyeach(style, MultiDimClosure(style, x, ones(Int, n), Ref(n)), source)
         f(x)
         return st
     else
-        arr = T(undef, 0)
-        st = applyeach(style, ArrayClosure(arr, style), source)
-        f(arr)
+        st = applyeach(style, ArrayClosure(x, style), source)
+        f(x)
         return st
     end
 end
 
-@noinline function makenoarg!(f, style, ::Type{T}, source) where {T}
-    y = initialize(style, T, source)
+@noinline function makenoarg!(f, style, y::T, source) where {T}
     st = applyeach(style, source) do k, v
         ret = findfield(style, T, y, k, v)
         ret isa EarlyReturn && return ret.value
@@ -905,12 +901,30 @@ function findfield(style, ::Type{T}, x, key::Symbol, val) where {T}
 end
 
 function findfield(style, ::Type{T}, x, key, val) where {T}
-    _foreach(fieldcount(T)) do i
-        f = fieldname(T, i)
-        ftags = fieldtags(style, T, f)
-        field = get(() -> String(f), ftags, :name)
-        if keyeq(key, field)
-            return EarlyReturn(applyfield!(style, T, x, i, ftags, val))
+    # generated use here to avoid the String(f) allocation at runtime
+    # if someone knows of a better way to compile away getting the field name as a string, please tell
+    if @generated
+        ex = Expr(:block)
+        for i = 1:fieldcount(T)
+            f = fieldname(T, i)
+            fstr = String(f)
+            push!(ex.args, quote
+                ftags = fieldtags(style, T, $(Meta.quot(f)))
+                field = get(ftags, :name, $fstr)
+                if keyeq(key, field)
+                    return EarlyReturn(applyfield!(style, T, x, $(i), ftags, val))
+                end
+            end)
+        end
+        return ex
+    else
+        _foreach(fieldcount(T)) do i
+            f = fieldname(T, i)
+            ftags = fieldtags(style, T, f)
+            field = get(() -> String(f), ftags, :name)
+            if keyeq(key, field)
+                return EarlyReturn(applyfield!(style, T, x, i, ftags, val))
+            end
         end
     end
 end
@@ -954,25 +968,11 @@ make!(::Type{T}, source; style::StructStyle=DefaultStyle()) where {T} = make!(st
 
 function make!(style::StructStyle, x::T, source) where {T}
     if dictlike(style, x)
-        st = applyeach(style, source) do k, v
-            key = liftkey(style, _keytype(x), k)
-            st = make!(style, _valtype(x), v) do val
-                addkeyval!(x, key, val)
-                return nothing
-            end
-            return st
-        end
+        makedict!(identity, style, x, source)
     elseif arraylike(style, x)
-        st = applyeach(style, source) do _, v
-            ET = eltype(x)
-            return make!(el -> push!(x, el), style, ET, v)
-        end
+        makearray!(identity, style, x, source)
     elseif noarg(style, x)
-        st = applyeach(style, source) do k, v
-            ret = findfield(style, T, x, k, v)
-            ret isa EarlyReturn && return ret.value
-            return nothing
-        end
+        makenoarg!(identity, style, x, source)
     else
         throw(ArgumentError("Type `$T` does not support in-place `make!`"))
     end
