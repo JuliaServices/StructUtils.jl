@@ -968,15 +968,14 @@ make!(::Type{T}, source; style::StructStyle=DefaultStyle()) where {T} = make!(st
 
 function make!(style::StructStyle, x::T, source) where {T}
     if dictlike(style, x)
-        makedict!(identity, style, x, source)
+        return makedict!(identity, style, x, source)
     elseif arraylike(style, x)
-        makearray!(identity, style, x, source)
+        return makearray!(identity, style, x, source)
     elseif noarg(style, x)
-        makenoarg!(identity, style, x, source)
+        return makenoarg!(identity, style, x, source)
     else
         throw(ArgumentError("Type `$T` does not support in-place `make!`"))
     end
-    return x
 end
 
 make!(style::StructStyle, ::Type{T}, source) where {T} = make!(style, initialize(style, T, source), source)
