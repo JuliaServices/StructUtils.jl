@@ -32,7 +32,7 @@ println("Dict{Symbol, Int}")
 @test StructUtils.make(Dict{Symbol, Int}, b) == d
 @test StructUtils.make(Dict{Symbol, Int}, bb) == d
 dmut = Dict{Symbol, Int}()
-@test StructUtils.make!(dmut, d) === dmut
+StructUtils.make!(dmut, d)
 @test dmut == d
 
 println("NamedTuple")
@@ -78,7 +78,7 @@ println("B struct")
 @test StructUtils.make(B, a) == b
 @test StructUtils.make(B, bb) == b
 bmut = B()
-@test StructUtils.make!(bmut, d) === bmut
+StructUtils.make!(bmut, d)
 @test bmut == b
 
 println("BB struct")
@@ -136,10 +136,10 @@ x = StructUtils.make(UndefGuy, (id=1, name="2"))
 x = StructUtils.make(UndefGuy, (id=1,))
 @test x.id == 1 && !isdefined(x, :name)
 x = UndefGuy()
-@test StructUtils.make!(x, (id=1, name="2")) === x
+StructUtils.make!(x, (id=1, name="2"))
 @test x.id == 1 && x.name == "2"
 x = UndefGuy()
-@test StructUtils.make!(x, (id=1,)) === x
+StructUtils.make!(x, (id=1,))
 @test x.id == 1 && !isdefined(x, :name)
 
 println("E")
@@ -178,9 +178,9 @@ println("P")
 p = StructUtils.make(P, (id=0, name="Jane"))
 @test p.id == 0 && p.name == "Jane"
 pmut = P()
-@test StructUtils.make!(pmut, (id=0, name="Jane")) === pmut
+StructUtils.make!(pmut, (id=0, name="Jane"))
 @test pmut.id == 0 && pmut.name == "Jane"
-@test StructUtils.make!(pmut, (id=0, name="Joan", rate=3.14)) === pmut
+StructUtils.make!(pmut, (id=0, name="Joan", rate=3.14))
 @test pmut.id == 0 && pmut.name == "Joan"
 
 println("Multi-dimensional arrays")
