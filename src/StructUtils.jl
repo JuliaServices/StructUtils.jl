@@ -978,7 +978,11 @@ function make!(style::StructStyle, x::T, source) where {T}
     end
 end
 
-make!(style::StructStyle, ::Type{T}, source) where {T} = make!(style, initialize(style, T, source), source)
+function make!(style::StructStyle, ::Type{T}, source) where {T}
+    x = initialize(style, T, source)
+    make!(style, x, source)
+    return x
+end
 
 @doc (@doc make) make!
 
