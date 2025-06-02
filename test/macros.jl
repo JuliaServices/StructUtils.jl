@@ -190,6 +190,29 @@ end
     a::T = 10 * 20
 end
 
+@defaults struct DefaultsAll
+    id::Int = 0
+    name::String = ""
+    value::Float64 = 1.0
+end
+
+@defaults struct DefaultsPartial
+    required::String
+    optional1::Int = 10
+    optional2::Bool = true
+end
+
+@tags struct TagsWithDefaults
+    id::Int = 0 &(json=(name="identifier",),)
+    name::String = "default" &(json=(name="full_name",),)
+    score::Float64 = 0.0
+end
+
+@tags struct TagsPartialDefaults
+    required::String &(json=(required=true,),)
+    optional::Int = 42 &(json=(name="opt",),)
+end
+
 @testset "macros" begin
 
     @test NoArg() isa NoArg
@@ -286,6 +309,43 @@ end
     @test_throws ArgumentError @macroexpand @defaults struct FooFoo
         a::Int = 1
         b::String
+    end
+
+    # Test partial constructors with defaults
+    @testset "@defaults partial constructors" begin
+        # Test DefaultsAll - all fields have defaults
+        @test DefaultsAll() == DefaultsAll(0, "", 1.0)
+        @test DefaultsAll(5) == DefaultsAll(5, "", 1.0)
+        @test DefaultsAll(5, "test") == DefaultsAll(5, "test", 1.0)
+        @test DefaultsAll(5, "test", 2.5) == DefaultsAll(5, "test", 2.5)
+        
+        # Test DefaultsPartial - mixed required and default fields
+        @test DefaultsPartial("required") == DefaultsPartial("required", 10, true)
+        @test DefaultsPartial("required", 20) == DefaultsPartial("required", 20, true)
+        @test DefaultsPartial("required", 20, false) == DefaultsPartial("required", 20, false)
+    end
+
+    @testset "@tags with defaults partial constructors" begin
+        # Test TagsWithDefaults - all fields have defaults
+        @test TagsWithDefaults() == TagsWithDefaults(0, "default", 0.0)
+        @test TagsWithDefaults(1) == TagsWithDefaults(1, "default", 0.0)
+        @test TagsWithDefaults(1, "custom") == TagsWithDefaults(1, "custom", 0.0)
+        @test TagsWithDefaults(1, "custom", 99.9) == TagsWithDefaults(1, "custom", 99.9)
+        
+        # Test TagsPartialDefaults - mixed required and default fields
+        @test TagsPartialDefaults("needed") == TagsPartialDefaults("needed", 42)
+        @test TagsPartialDefaults("needed", 100) == TagsPartialDefaults("needed", 100)
+        
+        # Test that field tags are preserved
+        ft = StructUtils.fieldtags(StructUtils.DefaultStyle(), TagsWithDefaults)
+        @test ft.id == (json=(name="identifier",),)
+        @test ft.name == (json=(name="full_name",),)
+        
+        # Test that field defaults are preserved
+        fd = StructUtils.fielddefaults(StructUtils.DefaultStyle(), TagsWithDefaults)
+        @test fd.id == 0
+        @test fd.name == "default"
+        @test fd.score == 0.0
     end
 
 end # @testset "macros"

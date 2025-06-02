@@ -184,8 +184,7 @@ function parse_struct_def(kind, src, mod, expr)
         generate_field_defaults_and_tags!(ret, T, fields)
     else
         # if any default are specified, ensure all trailing fields have defaults
-        # then generate an outer constructor with leading non-default fields as arguments
-        # passing defaults to inner constructor
+        # then generate multiple outer constructors allowing partial specification
         anydefaults = false
         for (i, f) in enumerate(fields)
             anydefaults |= f.default !== none
@@ -194,9 +193,41 @@ function parse_struct_def(kind, src, mod, expr)
             end
         end
         if anydefaults
-            sig = Expr(:call, T, (f.name for f in fields if f.default === none)...)
-            fexpr = Expr(:function, sig, Expr(:block, src, :(return $T($((f.default === none ? f.name : f.default for f in fields)...)))))
-            push!(ret.args, fexpr)
+            # find the first field with a default
+            first_default_idx = findfirst(f -> f.default !== none, fields)
+            if first_default_idx !== nothing
+                # generate constructors for each possible number of arguments
+                # from minimum required (non-default fields) up to just before all fields
+                non_default_count = first_default_idx - 1
+                total_fields = length(fields)
+                
+                # generate constructors that take k arguments where k goes from
+                # non_default_count to (total_fields - 1)
+                for num_args in non_default_count:(total_fields - 1)
+                    if num_args >= 0
+                        # constructor takes first num_args fields as arguments
+                        sig = Expr(:call, T, (fields[i].name for i in 1:num_args)...)
+                        # build the call to the full constructor
+                        call_args = []
+                        for (i, f) in enumerate(fields)
+                            if i <= num_args
+                                push!(call_args, f.name)
+                            else
+                                push!(call_args, f.default)
+                            end
+                        end
+                        fexpr = Expr(:function, sig, Expr(:block, src, :(return $T($(call_args...)))))
+                        push!(ret.args, fexpr)
+                        
+                        # also generate version with type parameters if applicable
+                        if @isdefined(T_with_typeparams)
+                            sig_tp = Expr(:where, Expr(:call, T_with_typeparams, (fields[i].name for i in 1:num_args)...), typeparams...)
+                            fexpr_tp = Expr(:function, sig_tp, Expr(:block, src, :(return $T_with_typeparams($(call_args...)))))
+                            push!(ret.args, fexpr_tp)
+                        end
+                    end
+                end
+            end
         end
         generate_field_defaults_and_tags!(ret, T, fields)
     end
