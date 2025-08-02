@@ -182,6 +182,10 @@ function parse_struct_def(kind, src, mod, expr)
         # override StructUtils.kwarg(::Type{T}) = true and add outside struct definition
         push!(ret.args, :(StructUtils.kwarg(::StructUtils.StructStyle, ::Type{<:$T}) = true))
         generate_field_defaults_and_tags!(ret, T, fields)
+    elseif kind == :nonstruct
+        # Override StructUtils.structlike to return false and add outside struct definition
+        push!(ret.args, :(StructUtils.structlike(::StructUtils.StructStyle, ::Type{<:$T}) = false))
+        generate_field_defaults_and_tags!(ret, T, fields)
     else
         # if any default are specified, ensure all trailing fields have defaults
         # then generate multiple outer constructors allowing partial specification
@@ -390,4 +394,40 @@ $SHARED_MACRO_DOCS
 """
 macro tags(expr)
     parse_struct_def(:tags, __source__, __module__, expr)
+end
+
+"""
+    @nonstruct struct T
+        ...
+    end
+
+Macro to mark a struct as not struct-like for StructUtils purposes. This macro
+overrides `StructUtils.structlike` to return `false` for the struct type, which
+means that `StructUtils.make` will not attempt to construct the struct using its
+fields, but will instead use the `lift` function to convert the source directly
+to the struct type.
+
+This is useful for "unit" or "atom" types where the fields should be considered
+private to the `make` process and the struct should be constructed by lifting
+the source object directly.
+
+**Note**: The `@nonstruct` macro does not support field defaults, field tags, or
+other StructUtils macros (`@defaults`, `@tags`, `@noarg`, `@kwarg`) because by
+using `@nonstruct`, you are explicitly opting out of StructUtils' struct-like
+functionality. The struct's fields are considered private implementation details
+for the `make` process.
+
+Example
+```julia
+@nonstruct struct MyUnit
+    value::String
+end
+
+# This will use StructUtils.lift to convert the source directly to MyUnit
+# rather than trying to construct it from field values
+x = StructUtils.make(MyUnit, "hello")
+```
+"""
+macro nonstruct(expr)
+    parse_struct_def(:nonstruct, __source__, __module__, expr)
 end

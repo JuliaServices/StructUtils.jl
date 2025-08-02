@@ -331,16 +331,16 @@ end
         @test TagsWithDefaults(1) == TagsWithDefaults(1, "default", 0.0)
         @test TagsWithDefaults(1, "custom") == TagsWithDefaults(1, "custom", 0.0)
         @test TagsWithDefaults(1, "custom", 99.9) == TagsWithDefaults(1, "custom", 99.9)
-        
+
         # Test TagsPartialDefaults - mixed required and default fields
         @test TagsPartialDefaults("needed") == TagsPartialDefaults("needed", 42)
         @test TagsPartialDefaults("needed", 100) == TagsPartialDefaults("needed", 100)
-        
+
         # Test that field tags are preserved
         ft = StructUtils.fieldtags(StructUtils.DefaultStyle(), TagsWithDefaults)
         @test ft.id == (json=(name="identifier",),)
         @test ft.name == (json=(name="full_name",),)
-        
+
         # Test that field defaults are preserved
         fd = StructUtils.fielddefaults(StructUtils.DefaultStyle(), TagsWithDefaults)
         @test fd.id == 0

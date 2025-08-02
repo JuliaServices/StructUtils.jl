@@ -208,3 +208,13 @@ struct Point
     x::Int
     y::Int
 end
+
+# Test structs for @nonstruct macro
+@nonstruct struct NonStructUnit
+    value::String
+end
+
+@nonstruct struct NonStructComplex
+    id::Int
+    data::String
+end

@@ -2,7 +2,7 @@ module StructUtils
 
 using Dates, UUIDs
 
-export @noarg, @defaults, @tags, @kwarg, Selectors
+export @noarg, @defaults, @tags, @kwarg, @nonstruct, Selectors
 
 """
     StructUtils.StructStyle
