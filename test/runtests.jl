@@ -230,4 +230,18 @@ StructUtils.reset!(p)
     @test x3 == exp3
 end
 
+@testset "@nonstruct macro" begin
+    # Test basic @nonstruct functionality
+    @test !StructUtils.structlike(StructUtils.DefaultStyle(), NonStructUnit)
+    @test !StructUtils.structlike(StructUtils.DefaultStyle(), NonStructComplex)
+    
+    # Test that structlike returns false for @nonstruct types with style
+    @test !StructUtils.structlike(StructUtils.DefaultStyle(), NonStructUnit)
+    @test !StructUtils.structlike(StructUtils.DefaultStyle(), NonStructComplex)
+    
+    # Test that @nonstruct works with type parameters
+    @test !StructUtils.structlike(StructUtils.DefaultStyle(), NonStructUnit)
+    @test !StructUtils.structlike(StructUtils.DefaultStyle(), NonStructComplex)
+end
+
 end

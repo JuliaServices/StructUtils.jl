@@ -79,6 +79,26 @@ This approach allows library authors to provide custom serialization/deserializa
 
 StructUtils.jl provides several macros to enhance struct definitions:
 
+### `@nonstruct` - Non-struct-like Types
+
+The `@nonstruct` macro marks a struct as not struct-like for StructUtils purposes. This is useful for custom types that should be treated as primitives rather than structs during serialization/deserialization:
+
+```julia
+@nonstruct struct Email
+    value::String
+end
+
+# Define conversion methods
+StructUtils.lift(::Type{Email}, x::String) = Email(x)
+StructUtils.lower(x::Email) = x.value
+
+# Now Email will be serialized as a string, not an object
+user = User(email=Email("alice@example.com"))
+dict = StructUtils.make(Dict{String,Any}, user)  # email field is a string
+```
+
+**Note**: `@nonstruct` does not support field defaults, tags, or other StructUtils macros since you're explicitly opting out of struct-like behavior.
+
 ### `@noarg` - No-argument Constructor
 
 The `@noarg` macro creates a no-argument constructor for mutable structs and allows setting default values:
@@ -314,6 +334,94 @@ The selector syntax supports various operations:
 - `x[:]` - Select all values
 - `x[~, "key"]` - Recursively select all values with key
 - `x[:, (k,v) -> Bool]` - Filter by predicate
+
+### Non-Struct-Like Structs with `@nonstruct`
+
+What if you have a custom struct that you want behave more like a primitive type rather than a struct?
+
+The `@nonstruct` macro is perfect for this use case. By marking your struct as non-struct-like, you tell StructUtils to treat it as a primitive type that should be converted directly using `lift` and `lower` methods rather than constructing it from field values.
+
+Here's an example of a custom email type that should be serialized as a JSON string:
+
+```julia
+@nonstruct struct Email
+    value::String
+    
+    function Email(value::String)
+        # Validate email format
+        if !occursin(r"^[^@]+@[^@]+\.[^@]+$", value)
+            throw(ArgumentError("Invalid email format: $value"))
+        end
+        new(value)
+    end
+end
+
+# Define how to convert from various sources to Email
+StructUtils.lift(::Type{Email}, x::String) = Email(x)
+
+# Define how to convert Email to a serializable format
+StructUtils.lower(x::Email) = x.value
+
+# Now you can use Email in your structs and it will be serialized as a string
+@defaults struct User
+    id::Int = 1
+    name::String = "default"
+    email::Email
+end
+
+# Create a user with an email
+user = User(email=Email("alice@example.com"))
+
+# Convert to Dict - email will be a string, not an object
+dict = StructUtils.make(Dict{String,Any}, user)
+# Result: Dict("id" => 1, "name" => "default", "email" => "alice@example.com")
+
+# Convert back from Dict
+user_again = StructUtils.make(User, dict)
+```
+
+Another example - a custom numeric type that represents a percentage:
+
+```julia
+@nonstruct struct Percent <: Number
+    value::Float64
+    
+    function Percent(value::Real)
+        if value < 0 || value > 100
+            throw(ArgumentError("Percentage must be between 0 and 100"))
+        end
+        new(Float64(value))
+    end
+end
+
+# Convert from various numeric types
+StructUtils.lift(::Type{Percent}, x::Number) = Percent(x)
+StructUtils.lift(::Type{Percent}, x::String) = Percent(parse(Float64, x))
+
+# Convert to a simple number for serialization
+StructUtils.lower(x::Percent) = x.value
+
+# Use in a struct
+@defaults struct Product
+    name::String = "default"
+    discount::Percent = Percent(0.0)
+end
+
+# Create and serialize
+product = Product(discount=Percent(15.5))
+dict = StructUtils.make(Dict{String,Any}, product)
+# Result: Dict("name" => "default", "discount" => 15.5)
+```
+
+The key points about `@nonstruct`:
+
+1. **No field defaults or tags**: Since you're opting out of struct-like behavior, field defaults and tags are not supported.
+
+2. **Requires `lift` and `lower` methods**: You must define how to convert to/from your type.
+
+3. **Fields are private**: The struct's fields are considered implementation details for the `make` process.
+
+4. **Perfect for wrapper types**: Great for types that wrap primitives but need custom validation or behavior.
 
 ## Complex Example
 
