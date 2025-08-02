@@ -772,21 +772,40 @@ else
     mem(n) = Memory{Any}(undef, n)
 end
 
+struct TupleSetClosure{A}
+    vals::A
+    j::Int
+end
+(f::TupleSetClosure{A})(x) where {A} = setindex!(f.vals, x, f.j)
+
+struct TupleClosure{T, A, S}
+    vals::A
+    style::S
+    i::Ptr{Int}
+end
+
+function (f::TupleClosure{T, A, S})(_, v) where {T, A, S} 
+    j = unsafe_load(f.i)
+    if j <= fieldcount(T)
+        FT = fieldtype(T, j)
+        ret = make!(TupleSetClosure(f.vals, j), f.style, FT, v)
+        unsafe_store!(f.i, j + 1)
+        return ret
+    end
+    return nothing
+end
+
 function maketuple!(f, style, ::Type{T}, source) where {T}
     vals = mem(fieldcount(T))
     for i = 1:fieldcount(T)
         @inbounds vals[i] = nothing
     end
-    i = Ref{Int}(0)
-    st = applyeach(style, source) do _, v
-        j = i[] += 1
-        if j <= fieldcount(T)
-            FT = fieldtype(T, j)
-            return make!(x -> setindex!(vals, x, j), style, FT, v)
-        end
-        return nothing
+    ref = Ref(1)
+    GC.@preserve ref begin
+        i = Base.unsafe_convert(Ptr{Int}, ref)
+        st = applyeach(style, TupleClosure{T, typeof(vals), typeof(style)}(vals, style, i), source)
     end
-    f(Tuple(vals))
+    f((vals...,))
     return st
 end
 
@@ -795,9 +814,7 @@ struct DictSetClosure{T, K}
     key::K
 end
 
-function (f::DictSetClosure{T, K})(v) where {T, K}
-    addkeyval!(f.dict, f.key, v)
-end
+(f::DictSetClosure{T, K})(v) where {T, K} = addkeyval!(f.dict, f.key, v)
 
 struct DictClosure{T, S}
     dict::T
@@ -810,7 +827,7 @@ function (f::DictClosure{T, S})(k, v) where {T, S}
     return st
 end
 
-@noinline function makedict!(f, style, dict, source)
+function makedict!(f, style, dict, source)
     st = applyeach(style, DictClosure(dict, style), source)
     f(dict)
     return st
@@ -821,9 +838,7 @@ struct ArraySetClosure{T, A}
     style::A
 end
 
-function (f::ArraySetClosure{T, A})(v) where {T, A}
-    push!(f.arr, v)
-end
+(f::ArraySetClosure{T, A})(v) where {T, A} = push!(f.arr, v)
 
 struct ArrayClosure{T, A}
     arr::T
@@ -835,7 +850,7 @@ function (f::ArrayClosure{T, A})(_, v) where {T, A}
     return st
 end
 
-@noinline function makearray!(f, style, x::T, source) where {T}
+function makearray!(f, style, x::T, source) where {T}
     if ndims(T) > 1
         # multidimensional arrays
         n = ndims(T)
@@ -849,14 +864,32 @@ end
     end
 end
 
-@noinline function makenoarg!(f, style, y::T, source) where {T}
-    st = applyeach(style, source) do k, v
-        ret = findfield(style, T, y, k, v)
-        ret isa EarlyReturn && return ret.value
-        return nothing
-    end
+struct NoArgClosure{T, S}
+    y::T
+    style::S
+end
+
+function (f::NoArgClosure{T})(k, v) where {T}
+    ret = findfield(f.style, T, f.y, k, v)
+    ret isa EarlyReturn && return ret.value
+    return nothing
+end
+
+function makenoarg!(f, style, y::T, source) where {T}
+    st = applyeach(style, NoArgClosure(y, style), source)
     f(y)
     return st
+end
+
+struct StructClosure{T, A, S}
+    fields::A
+    style::S
+end
+
+function (f::StructClosure{T, A, S})(k, v) where {T, A, S}
+    ret = findfield(f.style, T, f.fields, k, v)
+    ret isa EarlyReturn && return ret.value
+    return nothing
 end
 
 function makestruct!(f, style, ::Type{T}, source) where {T}
@@ -864,40 +897,111 @@ function makestruct!(f, style, ::Type{T}, source) where {T}
     for i = 1:fieldcount(T)
         @inbounds fields[i] = fielddefault(style, T, fieldname(T, i))
     end
-    st = applyeach(style, source) do k, v
-        ret = findfield(style, T, fields, k, v)
-        ret isa EarlyReturn && return ret.value
-        return nothing
-    end
+    st = applyeach(style, StructClosure{T, typeof(fields), typeof(style)}(fields, style), source)
     if T <: NamedTuple
-        f(T(Tuple(fields)))
+        f(T((fields...,)))
     else
         f(T(fields...))
     end
     return st
 end
 
+mutable struct FieldValue{T}
+    value::T
+end
+
+(f::FieldValue)(x) = setfield!(f, :value, x)
+
+# or should we generate: struct AClosure; a::Base.RefValue{Union{Int, Nothing}}; b::Base.RefValue{Union{Int, Nothing}}, etc.?
+struct SpecializedStructClosure{T, S, TT}
+    style::S
+    values::TT # tuple of FieldValues for T's fields
+end
+
+function (f::SpecializedStructClosure{T, S, TT})(k, v) where {T, S, TT}
+    aftags = fieldtags(f.style, T, :a)
+    afield = get(aftags, :name, :a)
+    if k == afield
+        return make!(f.values[1], f.style, fieldtype(T, :a), v)
+    end
+    bftags = fieldtags(f.style, T, :b)
+    bfield = get(bftags, :name, :b)
+    if k == bfield
+        return make!(f.values[2], f.style, fieldtype(T, :b), v)
+    end
+    cftags = fieldtags(f.style, T, :c)
+    cfield = get(cftags, :name, :c)
+    if k == cfield
+        return make!(f.values[3], f.style, fieldtype(T, :c), v)
+    end
+    dftags = fieldtags(f.style, T, :d)
+    dfield = get(dftags, :name, :d)
+    if k == dfield
+        return make!(f.values[4], f.style, fieldtype(T, :d), v)
+    end
+    return
+end
+
+function makespecializedstruct!(f, style, ::Type{A}, source)
+    values = (
+        FieldValue{fieldtype(A, :a)}(fielddefault(style, A, :a)),
+        FieldValue{fieldtype(A, :b)}(fielddefault(style, A, :b)),
+        FieldValue{fieldtype(A, :c)}(fielddefault(style, A, :c)),
+        FieldValue{fieldtype(A, :d)}(fielddefault(style, A, :d))
+    )
+    clos = SpecializedStructClosure{A, typeof(style), typeof(values)}(style, values)
+    st = applyeach(style, clos, source)
+    f(A(values[1].value, values[2].value, values[3].value, values[4].value))
+    return st
+end
+
+@generated function makespecializedstruct!(f, style, ::Type{T}, source) where {T}
+    expr = Expr(:block)
+    for i = 1:fieldcount(T)
+
+    end
+    return expr
+end
+
 # x is mutable struct of type T or Memory{Any} for struct
 # findfield tries to find the field of a struct that key matches
+struct FindFieldIntClosure{T, A, S, V}
+    x::A
+    style::S
+    key::Int
+    val::V
+end
+
+function (f::FindFieldIntClosure{T, A, S})(i::Int) where {T, A, S}
+    if f.key == i
+        field = fieldname(T, i)
+        ftags = fieldtags(f.style, T, field)
+        return EarlyReturn(applyfield!(f.style, T, f.x, i, ftags, f.val))
+    end
+end
+
 function findfield(style, ::Type{T}, x, key::Int, val) where {T}
-    _foreach(fieldcount(T)) do i
-        if key == i
-            field = fieldname(T, i)
-            ftags = fieldtags(style, T, field)
-            return EarlyReturn(applyfield!(style, T, x, i, ftags, val))
-        end
+    _foreach(FindFieldIntClosure{T, typeof(x), typeof(style), typeof(val)}(x, style, key, val), fieldcount(T))
+end
+
+struct FindFieldSymbolClosure{T, A, S, V}
+    x::A
+    style::S
+    key::Symbol
+    val::V
+end
+
+function (f::FindFieldSymbolClosure{T, A, S})(i::Int) where {T, A, S}
+    field = fieldname(T, i)
+    ftags = fieldtags(f.style, T, field)
+    field = get(ftags, :name, field)
+    if f.key == field
+        return EarlyReturn(applyfield!(f.style, T, f.x, i, ftags, f.val))
     end
 end
 
 function findfield(style, ::Type{T}, x, key::Symbol, val) where {T}
-    _foreach(fieldcount(T)) do i
-        field = fieldname(T, i)
-        ftags = fieldtags(style, T, field)
-        field = get(ftags, :name, field)
-        if key == field
-            return EarlyReturn(applyfield!(style, T, x, i, ftags, val))
-        end
-    end
+    _foreach(FindFieldSymbolClosure{T, typeof(x), typeof(style), typeof(val)}(x, style, key, val), fieldcount(T))
 end
 
 function findfield(style, ::Type{T}, x, key, val) where {T}
@@ -905,6 +1009,7 @@ function findfield(style, ::Type{T}, x, key, val) where {T}
     # if someone knows of a better way to compile away getting the field name as a string, please tell
     if @generated
         ex = Expr(:block)
+        push!(ex.args, :(Base.@_inline_meta))
         for i = 1:fieldcount(T)
             f = fieldname(T, i)
             fstr = String(f)
@@ -938,16 +1043,26 @@ end
 Base.showerror(io::IO, e::FieldError) = print(io, "StructUtils.FieldError: error while making field `$(e.field)::$(fieldtype(e.T, e.field))` of type `$(e.T)` from `$(e.source)`")
 
 # we matched a field, so store the value/set the field with val
+struct ApplyFieldClosure{T, A, S, FT, V}
+    x::A
+    style::S
+    i::Int
+    ftags::FT
+    val::V
+end
+
+function (f::ApplyFieldClosure{T, A, S, FT, V})(v) where {T, A, S, FT, V}
+    if noarg(f.style, T)
+        _setfield!(f.x, f.i, v)
+    else
+        f.x[f.i] = v
+    end
+end
+
 function applyfield!(style, ::Type{T}, x, i::Int, ftags, val) where {T}
     FT = fieldtype(T, i)
     try
-        return make!(style, FT, val, ftags) do v
-            if noarg(style, T)
-                _setfield!(x, i, v)
-            else
-                x[i] = v
-            end
-        end
+        return make!(ApplyFieldClosure{T, typeof(x), typeof(style), typeof(ftags), typeof(val)}(x, style, i, ftags, val), style, FT, val)
     catch
         throw(FieldError(T, fieldname(T, i), val))
     end
