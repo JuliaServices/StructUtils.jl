@@ -319,10 +319,10 @@ StructUtils includes a `Selectors` module that provides a powerful way to query 
 using StructUtils.Selectors
 
 # Create a nested structure
-data = Dict("users" => [
+data = Dict("users" => List([
     Dict("id" => 1, "name" => "Alice"),
     Dict("id" => 2, "name" => "Bob")
-])
+]))
 
 # Query with selectors
 users = data["users"]  # Get the users array
