@@ -830,15 +830,21 @@ struct TupleClosure{T, A, S}
     i::Ptr{Int}
 end
 
-function (f::TupleClosure{T, A, S})(_, v) where {T, A, S} 
-    j = unsafe_load(f.i)
-    if j <= fieldcount(T)
-        FT = fieldtype(T, j)
-        ret = make!(SetField(f.vals, j), f.style, FT, v, (;))
-        unsafe_store!(f.i, j + 1)
-        return ret
+function (f::TupleClosure{T, A, S})(k, v) where {T, A, S}
+    st = _foreach(fieldcount(T)) do i
+        if typeof(k) == Int
+            if k == i
+                return EarlyReturn(make!(SetField(f.vals, i), f.style, fieldtype(T, i), v, (;)))
+            end
+        else
+            j = unsafe_load(f.i)
+            if j == i
+                unsafe_store!(f.i, i + 1)
+                return EarlyReturn(make!(SetField(f.vals, i), f.style, fieldtype(T, i), v, (;)))
+            end
+        end
     end
-    return nothing
+    return st === nothing ? 0 : st
 end
 
 function maketuple(style, ::Type{T}, source) where {T}
