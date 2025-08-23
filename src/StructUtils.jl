@@ -38,15 +38,9 @@ function dictlike end
 
 dictlike(st::StructStyle, x) = dictlike(st, typeof(x))
 dictlike(::StructStyle, T::Type) = dictlike(T)
-function dictlike(T::Type)
-    if T <: AbstractDict
-        return true
-    elseif T <: AbstractVector{<:Pair}
-        return true
-    else
-        return false
-    end
-end
+dictlike(::Type{<:AbstractDict}) = true
+dictlike(::Type{<:AbstractVector{<:Pair}}) = true
+dictlike(@nospecialize(T)) = false
 
 """
   StructUtils.noarg(x) -> Bool
@@ -62,7 +56,7 @@ function noarg end
 
 noarg(st::StructStyle, x) = noarg(st, typeof(x))
 noarg(::StructStyle, T::Type) = noarg(T)
-noarg(T::Type) = false
+noarg(@nospecialize(T)) = false
 
 """
   StructUtils.kwarg(x) -> Bool
@@ -81,7 +75,7 @@ function kwarg end
 
 kwarg(st::StructStyle, x) = kwarg(st, typeof(x))
 kwarg(::StructStyle, T::Type) = kwarg(T)
-kwarg(T::Type) = false
+kwarg(@nospecialize(T)) = false
 
 """
     StructUtils.fieldtagkey(::StructStyle) -> Symbol
@@ -111,6 +105,15 @@ in multiple ways for different namespaces, i.e. `a::Int &(mysql=(name="foo_a",),
 function fieldtagkey end
 
 fieldtagkey(::StructStyle) = nothing
+
+"""
+    StructUtils.defaultstate(::StructStyle) -> Any
+
+Returns the default state for a given struct style. This is used to initialize
+the state of a struct when no state is provided. The default implementation
+returns `nothing`.
+"""
+defaultstate(::StructStyle) = nothing
 
 """
     StructUtils.fieldtags(::StructStyle, ::Type{T}) -> NamedTuple
@@ -204,15 +207,13 @@ function arraylike end
 
 arraylike(st::StructStyle, x) = arraylike(st, typeof(x))
 arraylike(::StructStyle, T::Type) = arraylike(T)
-function arraylike(::Type{T}) where {T}
-    if T <: AbstractArray && ndims(T) == 0
-        return false
-    elseif T <: AbstractArray || T <: AbstractSet || T <: Tuple || T <: Base.Generator || T <: Core.SimpleVector
-        return true
-    else
-        return false
-    end
-end
+arraylike(::Type{<:AbstractArray{T,0}}) where {T} = false
+arraylike(::Type{<:AbstractArray}) = true
+arraylike(::Type{<:AbstractSet}) = true
+arraylike(::Type{<:Tuple}) = true
+arraylike(::Type{<:Base.Generator}) = true
+arraylike(::Type{<:Core.SimpleVector}) = true
+arraylike(@nospecialize(T)) = false
 
 """
   StructUtils.structlike(x) -> Bool
@@ -234,17 +235,20 @@ function structlike end
 
 structlike(st::StructStyle, x) = structlike(st, typeof(x))
 structlike(::StructStyle, T::Type) = structlike(T)
-function structlike(::Type{T}) where {T}
-    if T <: Function || T <: Module || (T <: AbstractArray && ndims(T) == 0) ||
-       T <: AbstractChar || T <: AbstractString || T == Symbol || T == Regex || T <: Dates.TimeType ||
-       T <: Number || T == Nothing || T == Missing || T == UUID || T == VersionNumber
-        return false
-    elseif isstructtype(T) && !Base.issingletontype(T)
-        return true
-    else
-        return false
-    end
-end
+structlike(::Type{<:Function}) = false
+structlike(::Type{<:Module}) = false
+structlike(::Type{<:AbstractArray{T,0}}) where {T} = false
+structlike(::Type{<:AbstractChar}) = false
+structlike(::Type{<:AbstractString}) = false
+structlike(::Type{Symbol}) = false
+structlike(::Type{Regex}) = false
+structlike(::Type{<:Dates.TimeType}) = false
+structlike(::Type{Number}) = false
+structlike(::Type{Nothing}) = false
+structlike(::Type{Missing}) = false
+structlike(::Type{UUID}) = false
+structlike(::Type{VersionNumber}) = false
+structlike(@nospecialize(T)) = isstructtype(T) && !Base.issingletontype(T)
 
 """
   StructUtils.nulllike(x) -> Bool
@@ -259,7 +263,7 @@ function nulllike end
 
 nulllike(st::StructStyle, x) = nulllike(st, typeof(x))
 nulllike(::StructStyle, T::Type) = nulllike(T)
-nulllike(T::Type) = T === Missing || T === Nothing
+nulllike(@nospecialize(T)) = T === Missing || T === Nothing
 
 """
   StructUtils.lower(x) -> x
@@ -344,7 +348,7 @@ lift(::Type{VersionNumber}, x::AbstractString) = VersionNumber(x)
 lift(::Type{Regex}, x::AbstractString) = Regex(x)
 lift(::Type{T}, x::AbstractString) where {T<:Dates.TimeType} = T(x)
 
-function lift(::Type{T}, x::AbstractString) where {T <: Enum}
+function lift(::Type{T}, x::AbstractString) where {T<:Enum}
     sym = Symbol(x)
     for (k, v) in Base.Enums.namemap(T)
         v === sym && return T(k)
@@ -352,30 +356,28 @@ function lift(::Type{T}, x::AbstractString) where {T <: Enum}
     throw(ArgumentError("invalid `$T` string value: \"$sym\""))
 end
 
-lift(::StructStyle, ::Type{T}, x) where {T} = lift(T, x)
+lift(st::StructStyle, ::Type{T}, x) where {T} = lift(T, x), defaultstate(st)
 
 # bit of an odd case, but support 0-dimensional array lifting from scalar value
 function lift(st::StructStyle, ::Type{A}, x) where {A<:AbstractArray{T,0}} where {T}
     m = A(undef)
     m[1] = lift(st, T, x)
-    return m
+    return m, defaultstate(st)
 end
 
 function lift(st::StructStyle, ::Type{T}, x, tags) where {T}
     if haskey(tags, :lift)
-        return tags.lift(x)
+        return tags.lift(x), defaultstate(st)
     elseif T <: Dates.TimeType && haskey(tags, :dateformat)
         if tags.dateformat isa String
-            return parse(T, x, Dates.DateFormat(tags.dateformat))
+            return parse(T, x, Dates.DateFormat(tags.dateformat)), defaultstate(st)
         else
-            return parse(T, x, tags.dateformat)
+            return parse(T, x, tags.dateformat), defaultstate(st)
         end
     else
         return lift(st, T, x)
     end
 end
-
-lift(f, st::StructStyle, ::Type{T}, x, tags) where {T} = f(lift(st, T, x, tags))
 
 """
   StructUtils.liftkey(::Type{T}, x) -> x
@@ -480,7 +482,7 @@ function applyeach(st::StructStyle, f, x::AbstractArray)
         end
         ret isa EarlyReturn && return ret
     end
-    return length(x)
+    return defaultstate(st)
 end
 
 # special-case Pair vectors to act like Dicts
@@ -489,7 +491,7 @@ function applyeach(st::StructStyle, f, x::AbstractVector{Pair{K,V}}) where {K,V}
         ret = f(lowerkey(st, k), lower(st, v))
         ret isa EarlyReturn && return ret
     end
-    return
+    return defaultstate(st)
 end
 
 # appropriate definition for iterables that
@@ -499,7 +501,7 @@ function applyeach(st::StructStyle, f, x::Union{AbstractSet,Base.Generator,Core.
         ret = f(lowerkey(st, i), lower(st, v))
         ret isa EarlyReturn && return ret
     end
-    return
+    return defaultstate(st)
 end
 
 # generic definition for Tuple, NamedTuple, structs
@@ -528,7 +530,7 @@ function applyeach(st::StructStyle, f, x::T) where {T}
                 end
             end)
         end
-        push!(ex.args, :(return))
+        push!(ex.args, :(return defaultstate(st)))
         return ex
     else
         defs = fielddefaults(st, T)
@@ -547,7 +549,7 @@ function applyeach(st::StructStyle, f, x::T) where {T}
                 ret isa EarlyReturn && return ret
             end
         end
-        return
+        return defaultstate(st)
     end
 end
 
@@ -556,7 +558,7 @@ function applyeach(st::StructStyle, f, x::AbstractDict)
         ret = f(lowerkey(st, k), lower(st, v))
         ret isa EarlyReturn && return ret
     end
-    return
+    return defaultstate(st)
 end
 
 @static if VERSION < v"1.10"
@@ -569,7 +571,7 @@ end
         atomicfields = t.name.atomicfields
         atomicfields === C_NULL && return false
         s -= 1
-        return unsafe_load(Ptr{UInt32}(atomicfields), 1 + s÷32) & (1 << (s%32)) != 0
+        return unsafe_load(Ptr{UInt32}(atomicfields), 1 + s ÷ 32) & (1 << (s % 32)) != 0
     end
 else
     const _isfieldatomic = Base.isfieldatomic
@@ -604,30 +606,30 @@ end
 # note that it should be used sparingly/carefully since it consumes
 # the source object and we generally want to do a single pass
 if VERSION < v"1.10"
-mutable struct LengthClosure
-    len::Int
-end
-(f::LengthClosure)(_, _) = f.len += 1
-function applylength(x)
-    lc = LengthClosure(0)
-    StructUtils.applyeach(lc, x)
-    return lc.len
-end
-else
-struct LengthClosure
-    len::Ptr{Int}
-end
-
-(f::LengthClosure)(_, _) = unsafe_store!(f.len, unsafe_load(f.len) + 1)
-
-function applylength(x)
-    ref = Ref(0)
-    GC.@preserve ref begin
-        lc = LengthClosure(Base.unsafe_convert(Ptr{Int}, ref))
-        StructUtils.applyeach(lc, x)
-        return unsafe_load(lc.len)
+    mutable struct LengthClosure
+        len::Int
     end
-end
+    (f::LengthClosure)(_, _) = f.len += 1
+    function applylength(x)
+        lc = LengthClosure(0)
+        StructUtils.applyeach(lc, x)
+        return lc.len
+    end
+else
+    struct LengthClosure
+        len::Ptr{Int}
+    end
+
+    (f::LengthClosure)(_, _) = unsafe_store!(f.len, unsafe_load(f.len) + 1)
+
+    function applylength(x)
+        ref = Ref(0)
+        GC.@preserve ref begin
+            lc = LengthClosure(Base.unsafe_convert(Ptr{Int}, ref))
+            StructUtils.applyeach(lc, x)
+            return unsafe_load(lc.len)
+        end
+    end
 end # VERSION < v"1.10"
 
 # recursively build up multidimensional array dimensions
@@ -640,9 +642,11 @@ end # VERSION < v"1.10"
 function discover_dims(style, x)
     @assert arraylike(style, x)
     len = applylength(x)
-    ret = (applyeach(x) do _, v
-        return arraylike(style, v) ? EarlyReturn(discover_dims(style, v)) : EarlyReturn(())
-    end)::EarlyReturn
+    ret = (
+        applyeach(x) do _, v
+            return arraylike(style, v) ? EarlyReturn(discover_dims(style, v)) : EarlyReturn(())
+        end
+    )::EarlyReturn
     return (ret.value..., len)
 end
 
@@ -660,7 +664,8 @@ function (f::MultiDimClosure{S,A})(i::Int, val) where {S,A}
         st = applyeach(f, f.style, val)
         f.cur_dim[] += 1
     else
-        st = make!(MultiDimValFunc(f.style, f.arr, f.dims), f.style, eltype(f.arr), val, (;))
+        val, st = make(f.style, eltype(f.arr), val)
+        setindex!(f.arr, val, f.dims...)
     end
     return st
 end
@@ -703,61 +708,76 @@ to influence the construction of the struct.
 """
 function make end
 
-mutable struct ValueClosure{T}
-    value::T
-    ValueClosure{T}() where {T} = new{T}()
-end
-
-(f::ValueClosure{T})(x) where {T} = setfield!(f, :value, x)
-
 function make(::Type{T}, source, style::StructStyle=DefaultStyle()) where {T}
-    out = ValueClosure{T}()
-    make!(out, style, T, source, (;))
-    return out.value
+    x, _ = make(style, T, source)
+    return x
 end
 
-function make!(f, style::StructStyle, T::Type, source, tags=(;))
-    if haskey(tags, :choosetype)
-        return make!(f, style, tags.choosetype(source), source, _delete(tags, :choosetype))
+if isdefined(Base, :delete) && applicable(Base.delete, (a=1,), :a)
+    const _delete = Base.delete
+else
+    Base.@constprop :aggressive function delete(a::NamedTuple{an}, field::Symbol) where {an}
+        names = Base.diff_names(an, (field,))
+        NamedTuple{names}(a)
     end
+    const _delete = delete
+end
+
+function make(style::StructStyle, T::Type, source, tags)
+    if haskey(tags, :choosetype)
+        return make(style, tags.choosetype(source), source, _delete(tags, :choosetype))
+    end
+    if T !== Any
+        if T >: Missing && T !== Missing
+            if nulllike(style, source)
+                return make(style, Missing, source, tags)
+            else
+                return make(style, nonmissingtype(T), source, tags)
+            end
+        elseif T >: Nothing && T !== Nothing
+            if nulllike(style, source)
+                return make(style, Nothing, source, tags)
+            else
+                return make(style, Base.nonnothingtype(T), source, tags)
+            end
+        end
+    end
+    if T <: Tuple || dictlike(style, T) || arraylike(style, T) || noarg(style, T) || structlike(style, T)
+        return make(style, T, source)
+    else
+        return lift(style, T, source, tags)
+    end
+end
+
+function make(style::StructStyle, T::Type, source)
     # start with some hard-coded Union cases
     if T !== Any
         if T >: Missing && T !== Missing
             if nulllike(style, source)
-                return make!(f, style, Missing, source, tags)
+                return make(style, Missing, source)
             else
-                return make!(f, style, nonmissingtype(T), source, tags)
+                return make(style, nonmissingtype(T), source)
             end
         elseif T >: Nothing && T !== Nothing
             if nulllike(style, source)
-                return make!(f, style, Nothing, source, tags)
+                return make(style, Nothing, source)
             else
-                return make!(f, style, Base.nonnothingtype(T), source, tags)
+                return make(style, Base.nonnothingtype(T), source)
             end
         end
     end
     if T <: Tuple
-        tup, st = maketuple(style, T, source)
-        f(tup)
-        return st
+        return maketuple(style, T, source)
     elseif dictlike(style, T)
-        di, st = makedict(style, T, source)
-        f(di)
-        return st
+        return makedict(style, T, source)
     elseif arraylike(style, T)
-        arr, st = makearray(style, T, source)
-        f(arr)
-        return st
+        return makearray(style, T, source)
     elseif noarg(style, T)
-        no, st = makenoarg(style, T, source)
-        f(no)
-        return st
+        return makenoarg(style, T, source)
     elseif structlike(style, T)
-        val, st = makestruct(style, T, source)
-        f(val)
-        return st
+        return makestruct(style, T, source)
     else
-        return lift(f, style, T, source, tags)
+        return lift(style, T, source)
     end
 end
 
@@ -779,27 +799,31 @@ end
     return ex
 end
 
-struct TupleClosure{T, A, S}
+struct TupleClosure{T,A,S}
     vals::A
     style::S
     i::Ptr{Int}
 end
 
-function (f::TupleClosure{T, A, S})(k, v) where {T, A, S}
+function (f::TupleClosure{T,A,S})(k, v) where {T,A,S}
     st = _foreach(T) do i
         if typeof(k) == Int
             if k == i
-                return EarlyReturn(make!(SetField(f.vals, i), f.style, fieldtype(T, i), v, (;)))
+                intval, intst = make(f.style, fieldtype(T, i), v)
+                @inbounds f.vals[i] = intval
+                return EarlyReturn(intst)
             end
         else
             j = unsafe_load(f.i)
             if j == i
                 unsafe_store!(f.i, i + 1)
-                return EarlyReturn(make!(SetField(f.vals, i), f.style, fieldtype(T, i), v, (;)))
+                elseval, elsest = make(f.style, fieldtype(T, i), v)
+                @inbounds f.vals[i] = elseval
+                return EarlyReturn(elsest)
             end
         end
     end
-    return st === nothing ? 0 : st
+    return st === nothing ? defaultstate(f.style) : st
 end
 
 function maketuple(style, ::Type{T}, source) where {T}
@@ -807,19 +831,41 @@ function maketuple(style, ::Type{T}, source) where {T}
     ref = Ref(1)
     GC.@preserve ref begin
         i = Base.unsafe_convert(Ptr{Int}, ref)
-        st = applyeach(style, TupleClosure{T, typeof(vals), typeof(style)}(vals, style, i), source)
+        st = applyeach(style, TupleClosure{T,typeof(vals),typeof(style)}(vals, style, i), source)
         return _tuple(T, vals), st
     end
+end
+
+struct DictClosure{T,S}
+    dict::T
+    style::S
+end
+
+function (f::DictClosure{T,S})(k, v) where {T,S}
+    val, st = make(f.style, _valtype(f.dict), v)
+    addkeyval!(f.dict, liftkey(f.style, _keytype(f.dict), k), val)
+    return st
 end
 
 makedict(style, ::Type{T}, source) where {T} = makedict(style, initialize(style, T, source), source)
 
 function makedict(style, dict::T, source) where {T}
-    st = applyeach(style, (k, v) -> make!(y -> addkeyval!(dict, liftkey(style, _keytype(dict), k), y), style, _valtype(dict), v, (;)), source)
+    st = applyeach(style, DictClosure(dict, style), source)
     return dict, st
 end
 
-makearray(style, ::Type{T}, source) where {T} = makearray(style, initialize(style, T, source), source)
+struct ArrayClosure{T,S}
+    arr::T
+    style::S
+end
+
+function (f::ArrayClosure{T,S})(_, v) where {T,S}
+    val, st = make(f.style, eltype(f.arr), v)
+    push!(f.arr, val)
+    return st
+end
+
+makearray(style, ::Type{T}, source) where {T} = @inline makearray(style, initialize(style, T, source), source)
 
 function makearray(style, x::T, source) where {T}
     if ndims(T) > 1
@@ -828,40 +874,35 @@ function makearray(style, x::T, source) where {T}
         st = applyeach(style, MultiDimClosure(style, x, ones(Int, n), Ref(n)), source)
         return x, st
     else
-        st = applyeach(style, (_, v) -> make!(y -> push!(x, y), style, eltype(x), v, (;)), source)
+        st = applyeach(style, ArrayClosure(x, style), source)
         return x, st
     end
 end
 
-struct SetField{A}
-    val::A # Memory{Any} for structs, T for mutable structs
-    i::Int
-end
-
-if VERSION < v"1.11"
-    (f::SetField{Vector{Any}})(x) = @inbounds f.val[f.i] = x
-else
-    (f::SetField{Memory{Any}})(x) = @inbounds f.val[f.i] = x
-end
-
-(f::SetField{T})(x) where {T} = _setfield!(f.val, f.i, x)
-
 @generated function fieldnamestrings(::Type{T}) where {T}
-    :( $(Tuple(String(fieldname(T, i)) for i in 1:fieldcount(T))) )
+    :($(Tuple(String(fieldname(T, i)) for i in 1:fieldcount(T))))
 end
 
 @generated function fieldnamesymbols(::Type{T}) where {T}
-    :( $(Tuple(fieldname(T, i) for i in 1:fieldcount(T))) )
+    :($(Tuple(fieldname(T, i) for i in 1:fieldcount(T))))
 end
 
-struct StructClosure{T, A, S, FS, FSS}
+struct StructClosure{T,A,S,FS,FSS}
     vals::A # Memory{Any} for structs, T for mutable structs
     style::S
     fsyms::FS
     fstrs::FSS
 end
 
-StructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T, A, S, FS, FSS} = StructClosure{T, A, S, FS, FSS}(vals, style, fsyms, fstrs)
+StructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FSS} = StructClosure{T,A,S,FS,FSS}(vals, style, fsyms, fstrs)
+
+if VERSION < v"1.11"
+    setval!(vals::Vector{Any}, x, i) = @inbounds vals[i] = x
+else
+    setval!(vals::Memory{Any}, x, i) = @inbounds vals[i] = x
+end
+
+setval!(vals::T, x, i) where {T} = _setfield!(vals, i, x)
 
 function findfield(::Type{T}, k, v, f) where {T}
     st = _foreach(T) do i
@@ -870,12 +911,16 @@ function findfield(::Type{T}, k, v, f) where {T}
             ftags = fieldtags(f.style, T, fn)
             field = get(ftags, :name, fn)
             if k == field
-                return EarlyReturn(make!(SetField(f.vals, i), f.style, fieldtype(T, i), v, ftags))
+                symval, symst = make(f.style, fieldtype(T, i), v, ftags)
+                setval!(f.vals, symval, i)
+                return EarlyReturn(symst)
             end
         elseif typeof(k) == Int
             if k == i
                 ftags = fieldtags(f.style, T, f.fsyms[i])
-                return EarlyReturn(make!(SetField(f.vals, i), f.style, fieldtype(T, i), v, ftags))
+                intval, intst = make(f.style, fieldtype(T, i), v, ftags)
+                setval!(f.vals, intval, i)
+                return EarlyReturn(intst)
             end
         else
             fn = f.fsyms[i]
@@ -883,14 +928,16 @@ function findfield(::Type{T}, k, v, f) where {T}
             ftags = fieldtags(f.style, T, fn)
             field = get(ftags, :name, fstr)
             if keyeq(k, field)
-                return EarlyReturn(make!(SetField(f.vals, i), f.style, fieldtype(T, i), v, ftags))
+                strval, strst = make(f.style, fieldtype(T, i), v, ftags)
+                setval!(f.vals, strval, i)
+                return EarlyReturn(strst)
             end
         end
     end
-    return st === nothing ? 0 : st
+    return st === nothing ? defaultstate(f.style) : st
 end
 
-(f::StructClosure{T, A, S, FS, FSS})(k, v) where {T, A, S, FS, FSS} = findfield(T, k, v, f)
+(f::StructClosure{T,A,S,FS,FSS})(k, v) where {T,A,S,FS,FSS} = findfield(T, k, v, f)
 
 @inline makenoarg(style, ::Type{T}, source) where {T} = makenoarg(style, initialize(style, T, source), source)
 
@@ -902,7 +949,7 @@ function makenoarg(style, y::T, source) where {T}
 end
 
 macro _v(i)
-    esc(:(isassigned(vals, $i) ? @inbounds(vals[$i])::fieldtype(T, $i) : fielddefault(style, T, @inbounds(fsyms[$i]))))
+    esc(:(isassigned(vals, $i) ? @inbounds(vals[$i])::fieldtype(T, $i) : fielddefault(style, T, @inbounds(fsyms[$i]))::fieldtype(T, $i)))
 end
 
 @generated function _construct(::Type{T}, vals, style, fsyms) where {T}
@@ -923,16 +970,6 @@ function makestruct(style, ::Type{T}, source) where {T}
     else
         return _construct(T, vals, style, fsyms), st
     end
-end
-
-if isdefined(Base, :delete) && applicable(Base.delete, (a=1,), :a)
-    const _delete = Base.delete
-else
-    Base.@constprop :aggressive function delete(a::NamedTuple{an}, field::Symbol) where {an}
-        names = Base.diff_names(an, (field,))
-        NamedTuple{names}(a)
-    end
-    const _delete = delete
 end
 
 make!(x::T, source; style::StructStyle=DefaultStyle()) where {T} = make!(style, x, source)
@@ -1037,18 +1074,26 @@ x = StructUtils.make(Vehicle, Dict("type" => "car", "make" => "Toyota", "model" 
 """
 macro choosetype(T, ex)
     esc(quote
-        function StructUtils.make!(f, st::StructUtils.StructStyle, ::Type{$T}, source, tags)
+        function StructUtils.make(st::StructUtils.StructStyle, ::Type{$T}, source, tags)
             func = $(ex)
-            StructUtils.make!(f, st, applicable(func, source, tags) ? func(source, tags) : func(source), source, tags)
+            StructUtils.make(st, applicable(func, source, tags) ? func(source, tags) : func(source), source, tags)
+        end
+        function StructUtils.make(st::StructUtils.StructStyle, ::Type{$T}, source)
+            func = $(ex)
+            StructUtils.make(st, func(source), source)
         end
     end)
 end
 
 macro choosetype(style, T, ex)
     esc(quote
-        function StructUtils.make!(f, st::$(style), ::Type{$T}, source, tags)
+        function StructUtils.make(st::$(style), ::Type{$T}, source, tags)
             func = $(ex)
-            StructUtils.make!(f, st, applicable(func, source, tags) ? func(source, tags) : func(source), source, tags)
+            StructUtils.make(st, applicable(func, source, tags) ? func(source, tags) : func(source), source, tags)
+        end
+        function StructUtils.make(st::$(style), ::Type{$T}, source)
+            func = $(ex)
+            StructUtils.make(st, func(source), source)
         end
     end)
 end
