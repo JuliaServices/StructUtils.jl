@@ -323,7 +323,7 @@ lowerkey(x) = x
 
 """
   StructUtils.lift(::Type{T}, x) -> T
-  StructUtils.lift(::StructStyle, ::Type{T}, x) -> T
+  StructUtils.lift(::StructStyle, ::Type{T}, x) -> Tuple{T, Any}
 
 Lifts a value `x` to a type `T`. This function is called by `StructUtils.make`
 to lift unit/atom values to the appropriate type. The default implementation is
@@ -332,6 +332,9 @@ for `Symbol`, `Char`, `UUID`, `VersionNumber`, `Regex`, and `TimeType` types to 
 constructed from strings.
 Allows transforming a "domain value" that may be some primitive representation
 into a more complex Julia type.
+
+The method with a `StructStyle` argument should return a tuple of the lifted value and any side-effect state
+derived from lifting the value.
 """
 function lift end
 
@@ -681,7 +684,7 @@ end
 """
     StructUtils.make(T, source) -> T
     StructUtils.make(T, source, style) -> T
-    StructUtils.make!(f, style, T, source)
+    StructUtils.make(style, T, source) -> Tuple{T, Any}
     StructUtils.make!(style, x::T, source)
 
 Construct a struct of type `T` from `source` using the given `style`. The `source` can be any
@@ -694,10 +697,10 @@ the automatic "all argument" constructor that structs have defined by default (e
 `make` calls `applyeach` on the `source` object, where the key-value pairs
 from `source` will be used in constructing `T`.
 
-The 3rd definition above allows passing in an "applicator" function that is
-applied to the constructed struct. This is useful when the initial `T` is
-abstract or a union type and a `choosetype` field tag or other `StructUtils.make` definition
-is used to determine the concrete runtime type to construct.
+The 3rd definition takes a `style` argument, allowing for overloads of non-owned types `T`.
+The main difference between this and the 2nd definition is that the 3rd definition allows for
+the `make` function to return a tuple of the constructed struct and any side-effect state
+derived from making the struct.
 
 The 4th definition allows passing in an already-constructed instance of `T` (`x`),
 which must be mutable, and source key-value pairs will be applied as
