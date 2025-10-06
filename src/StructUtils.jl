@@ -173,6 +173,8 @@ function initialize(st::StructStyle, ::Type{A}, source) where {A<:AbstractArray}
     end
 end
 
+initialize(::StructStyle, ::Type{T}, source) where {T<:AbstractSet} = T()
+
 """
     StructUtils.addkeyval!(d, k, v)
 
@@ -871,7 +873,7 @@ end
 makearray(style, ::Type{T}, source) where {T} = @inline makearray(style, initialize(style, T, source), source)
 
 function makearray(style, x::T, source) where {T}
-    if ndims(T) > 1
+    if !(T <: AbstractSet) && ndims(T) > 1
         # multidimensional arrays
         n = ndims(T)
         st = applyeach(style, MultiDimClosure(style, x, ones(Int, n), Ref(n)), source)
