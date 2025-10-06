@@ -55,24 +55,23 @@ const KeyInd = Union{AbstractString, Symbol}
 const Inds = Union{AbstractVector{<:KeyInd}, NTuple{N, <:KeyInd} where {N},
     AbstractVector{<:Integer}, NTuple{N, <:Integer} where {N}}
 
+function _getindex_array(x, key::Union{KeyInd, Integer})
+    values = List()
+    StructUtils.applyeach(x) do _, item
+        if StructUtils.structlike(StructUtils.DefaultStyle(), item)
+            push!(values, _getindex(item, key))
+        end
+    end
+    return values
+end
+
 function _getindex(x, key::Union{KeyInd, Integer})
     if StructUtils.arraylike(StructUtils.DefaultStyle(), x) && key isa KeyInd
         # indexing an array with a key, so we check
         # each element if it's an object and if the
         # object has the key
         # like a broadcasted getindex over x
-        values = List()
-        StructUtils.applyeach(x) do _, item
-            if StructUtils.structlike(StructUtils.DefaultStyle(), item)
-                # if array elements are objects, we do a broadcasted getproperty with `key`
-                # should we try-catch and ignore KeyErrors?
-                push!(values, _getindex(item, key))
-            else
-                # non-objects are just ignored
-            end
-            return
-        end
-        return values
+        return _getindex_array(x, key)
     elseif StructUtils.structlike(StructUtils.DefaultStyle(), x) || StructUtils.arraylike(StructUtils.DefaultStyle(), x)
         # indexing object w/ key or array w/ index
         # returns a single value
