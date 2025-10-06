@@ -244,4 +244,8 @@ end
     @test !StructUtils.structlike(StructUtils.DefaultStyle(), NonStructComplex)
 end
 
+@testset "Set make: #13" begin
+    @test StructUtils.make(Set{Symbol}, Any["FACTOR"]) == Set{Symbol}([:FACTOR])
+end
+
 end
