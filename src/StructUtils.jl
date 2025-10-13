@@ -25,9 +25,9 @@ struct DefaultStyle <: StructStyle end
 include("macros.jl")
 
 """
-  StructUtils.dictlike(x) -> Bool
-  StructUtils.dictlike(::StructStyle, x) -> Bool
-  StructUtils.dictlike(::StructStyle, ::Type{T}) -> Bool
+    StructUtils.dictlike(x) -> Bool
+    StructUtils.dictlike(::StructStyle, x) -> Bool
+    StructUtils.dictlike(::StructStyle, ::Type{T}) -> Bool
 
 Returns `true` if `x` or type `T` is dictionary-like, `false` otherwise.
 When `StructUtils.make(T, source)` is called, if `dictlike(T)` is `true`,
@@ -43,9 +43,9 @@ dictlike(::Type{<:AbstractVector{<:Pair}}) = true
 dictlike(@nospecialize(T)) = false
 
 """
-  StructUtils.noarg(x) -> Bool
-  StructUtils.noarg(::StructStyle, x) -> Bool
-  StructUtils.noarg(::StructStyle, ::Type{T}) -> Bool
+    StructUtils.noarg(x) -> Bool
+    StructUtils.noarg(::StructStyle, x) -> Bool
+    StructUtils.noarg(::StructStyle, ::Type{T}) -> Bool
 
 Signals that `x` or type `T` is a mutable type that can be constructed by calling an empty
 constructor, like `t = T()`. Automatically overloaded when structs use the
@@ -59,9 +59,9 @@ noarg(::StructStyle, T::Type) = noarg(T)
 noarg(@nospecialize(T)) = false
 
 """
-  StructUtils.kwarg(x) -> Bool
-  StructUtils.kwarg(::StructStyle, x) -> Bool
-  StructUtils.kwarg(::StructStyle, ::Type{T}) -> Bool
+    StructUtils.kwarg(x) -> Bool
+    StructUtils.kwarg(::StructStyle, x) -> Bool
+    StructUtils.kwarg(::StructStyle, ::Type{T}) -> Bool
 
 Signals that `x` or type `T` can be constructed by passing struct fields as keyword arguments
 to the constructor, like `t = T(field1=a, field2=b, ...)`. Automatically overloaded
@@ -193,9 +193,9 @@ _valtype(d) = valtype(d)
 _valtype(::AbstractVector{Pair{A,B}}) where {A,B} = B
 
 """
-  StructUtils.arraylike(x) -> Bool
-  StructUtils.arraylike(::StructStyle, x) -> Bool
-  StructUtils.arraylike(::StructStyle, ::Type{T}) -> Bool
+    StructUtils.arraylike(x) -> Bool
+    StructUtils.arraylike(::StructStyle, x) -> Bool
+    StructUtils.arraylike(::StructStyle, ::Type{T}) -> Bool
 
 Returns `true` if `x` or type `T` is array-like, `false` otherwise. This function is
 called by `StructUtils.make` to determine if `T` is array-like. The default
@@ -218,9 +218,9 @@ arraylike(::Type{<:Core.SimpleVector}) = true
 arraylike(@nospecialize(T)) = false
 
 """
-  StructUtils.structlike(x) -> Bool
-  StructUtils.structlike(::StructStyle, x) -> Bool
-  StructUtils.structlike(::StructStyle, ::Type{T}) -> Bool
+    StructUtils.structlike(x) -> Bool
+    StructUtils.structlike(::StructStyle, x) -> Bool
+    StructUtils.structlike(::StructStyle, ::Type{T}) -> Bool
 
 Returns `true` if `x` or type `T` is struct-like, `false` otherwise. This function is
 called by `StructUtils.make` to determine if `T` is struct-like. The default
@@ -253,9 +253,9 @@ structlike(::Type{VersionNumber}) = false
 structlike(@nospecialize(T)) = isstructtype(T) && !Base.issingletontype(T)
 
 """
-  StructUtils.nulllike(x) -> Bool
-  StructUtils.nulllike(::StructStyle, x) -> Bool
-  StructUtils.nulllike(::StructStyle, ::Type{T}) -> Bool
+    StructUtils.nulllike(x) -> Bool
+    StructUtils.nulllike(::StructStyle, x) -> Bool
+    StructUtils.nulllike(::StructStyle, ::Type{T}) -> Bool
 
 Returns `true` if `x` or type `T` is null-like, `false` otherwise. This function is
 mainly used in the `make!` implementation to determine if a
@@ -268,8 +268,8 @@ nulllike(::StructStyle, T::Type) = nulllike(T)
 nulllike(@nospecialize(T)) = T === Missing || T === Nothing
 
 """
-  StructUtils.lower(x) -> x
-  StructUtils.lower(::StructStyle, x) -> x
+    StructUtils.lower(x) -> x
+    StructUtils.lower(::StructStyle, x) -> x
 
 Domain value transformation function. This function is called by
 `StructUtils.applyeach` on each value in the `source` object before
@@ -294,8 +294,8 @@ function lower(st::StructStyle, x, tags)
 end
 
 """
-  StructUtils.lowerkey(x) -> x
-  StructUtils.lowerkey(style::StructUtils.StructStyle, x) -> x
+    StructUtils.lowerkey(x) -> x
+    StructUtils.lowerkey(style::StructUtils.StructStyle, x) -> x
 
 Allows customizing how a value is lowered when used specifically as a key.
 By default, calls [`StructUtils.lower`](@ref). Called from [`StructUtils.applyeach`](@ref)
@@ -324,8 +324,8 @@ lowerkey(::StructStyle, x) = lowerkey(x)
 lowerkey(x) = x
 
 """
-  StructUtils.lift(::Type{T}, x) -> T
-  StructUtils.lift(::StructStyle, ::Type{T}, x) -> Tuple{T, Any}
+    StructUtils.lift(::Type{T}, x) -> T
+    StructUtils.lift(::StructStyle, ::Type{T}, x) -> Tuple{T, Any}
 
 Lifts a value `x` to a type `T`. This function is called by `StructUtils.make`
 to lift unit/atom values to the appropriate type. The default implementation is
@@ -385,8 +385,8 @@ function lift(st::StructStyle, ::Type{T}, x, tags) where {T}
 end
 
 """
-  StructUtils.liftkey(::Type{T}, x) -> x
-  StructUtils.liftkey(style::StructStyle, ::Type{T}, x) -> x
+    StructUtils.liftkey(::Type{T}, x) -> x
+    StructUtils.liftkey(style::StructStyle, ::Type{T}, x) -> x
 
 Allows customizing how a key is lifted before being passed to [`addkeyval!`](@ref)
 in `dictlike` construction.
@@ -1002,7 +1002,7 @@ end
 @doc (@doc make) make!
 
 """
-  StructUtils.reset!(x::T)
+    StructUtils.reset!(x::T)
 
 If `T` was defined with default values via `@defaults`, `@tags`, `@kwarg`, or `@noarg`,
 `reset!` will reset the fields of `x` to their default values.
