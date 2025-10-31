@@ -203,6 +203,9 @@ p.id = 1
 StructUtils.reset!(p)
 @test p.name == "Jim"
 
+println("Q")
+@test StructUtils.make(Q, (id=0, value="application/json")) == Q(0, MIME("application/json"))
+
 @testset "multidimensional make" begin
     # 2D Int matrix from nested vectors
     x2 = StructUtils.make(Matrix{Int}, [[1, 3], [2, 4]])
