@@ -218,3 +218,8 @@ end
     id::Int
     data::String
 end
+
+struct Q
+    id::Int
+    value::MIME
+end
