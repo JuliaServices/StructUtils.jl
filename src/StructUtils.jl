@@ -250,6 +250,7 @@ structlike(::Type{Nothing}) = false
 structlike(::Type{Missing}) = false
 structlike(::Type{UUID}) = false
 structlike(::Type{VersionNumber}) = false
+structlike(::Type{MIME}) = false
 structlike(@nospecialize(T)) = isstructtype(T) && !Base.issingletontype(T)
 
 """
@@ -330,7 +331,7 @@ lowerkey(x) = x
 Lifts a value `x` to a type `T`. This function is called by `StructUtils.make`
 to lift unit/atom values to the appropriate type. The default implementation is
 the identity function for most types, but it also includes special cases
-for `Symbol`, `Char`, `UUID`, `VersionNumber`, `Regex`, and `TimeType` types to be
+for `Symbol`, `Char`, `UUID`, `VersionNumber`, `MIME`, `Regex`, and `TimeType` types to be
 constructed from strings.
 Allows transforming a "domain value" that may be some primitive representation
 into a more complex Julia type.
@@ -350,6 +351,7 @@ lift(::Type{>:Union{Missing,Nothing}}, ::Missing) = missing
 lift(::Type{Char}, x::AbstractString) = length(x) == 1 ? x[1] : throw(ArgumentError("expected single character, got $x"))
 lift(::Type{UUID}, x::AbstractString) = UUID(x)
 lift(::Type{VersionNumber}, x::AbstractString) = VersionNumber(x)
+lift(::Type{MIME}, x::AbstractString) = MIME(x)
 lift(::Type{Regex}, x::AbstractString) = Regex(x)
 lift(::Type{T}, x::AbstractString) where {T<:Dates.TimeType} = T(x)
 
