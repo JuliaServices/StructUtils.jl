@@ -241,8 +241,19 @@ end
 function generate_field_defaults_and_tags!(ret, T, fields)
     # generate fielddefaults override if applicable
     if any(f.default !== none for f in fields)
-        defs_nt = Expr(:tuple, Expr(:parameters, [:(($(f.name)=$(f.default))) for f in fields if f.default !== none]...))
-        push!(ret.args, Expr(:(=), Expr(:call, GlobalRef(StructUtils, :fielddefaults), Expr(:(::), GlobalRef(StructUtils, :StructStyle)), Expr(:(::), Expr(:curly, :Type, Expr(:(<:), T)))), defs_nt))
+        # Build a function body that evaluates default expressions in order,
+        # then returns a named tuple with the evaluated values.
+        # This allows defaults to reference earlier fields (e.g., b = a).
+        body = Expr(:block)
+        fields_with_defaults = [f for f in fields if f.default !== none]
+        # First, evaluate each default expression in order
+        for f in fields_with_defaults
+            push!(body.args, Expr(:(=), f.name, f.default))
+        end
+        # Then return a named tuple with the evaluated values
+        defs_nt = Expr(:tuple, Expr(:parameters, [:(($(f.name)=$(f.name))) for f in fields_with_defaults]...))
+        push!(body.args, Expr(:return, defs_nt))
+        push!(ret.args, Expr(:(=), Expr(:call, GlobalRef(StructUtils, :fielddefaults), Expr(:(::), GlobalRef(StructUtils, :StructStyle)), Expr(:(::), Expr(:curly, :Type, Expr(:(<:), T)))), body))
     end
     # generate fieldtags override if applicable
     if any(f.tags !== none for f in fields)
