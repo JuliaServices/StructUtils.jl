@@ -308,4 +308,22 @@ end
     @test StructUtils.make(Set{Symbol}, Any["FACTOR"]) == Set{Symbol}([:FACTOR])
 end
 
+@testset "Empty NamedTuple structlike" begin
+    # Test that empty named tuple value is struct-like
+    empty_nt = (;)
+    @test StructUtils.structlike(empty_nt) == true
+    @test StructUtils.structlike(StructUtils.DefaultStyle(), empty_nt) == true
+    
+    # Test that empty named tuple type is struct-like
+    @test StructUtils.structlike(typeof(empty_nt)) == true
+    @test StructUtils.structlike(StructUtils.DefaultStyle(), typeof(empty_nt)) == true
+    @test StructUtils.structlike(NamedTuple{(), Tuple{}}) == true
+    @test StructUtils.structlike(StructUtils.DefaultStyle(), NamedTuple{(), Tuple{}}) == true
+    
+    # Test that make works with empty named tuples
+    @test StructUtils.make(typeof(empty_nt), (;)) == (;)
+    @test StructUtils.make(NamedTuple{(), Tuple{}}, Dict()) == (;)
+    @test StructUtils.make(Dict{Symbol, Int}, (;)) == Dict{Symbol, Int}()
+end
+
 end
