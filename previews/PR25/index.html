@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>StructUtils.jl Documentation · StructUtils.jl</title><meta name="title" content="StructUtils.jl Documentation · StructUtils.jl"/><meta property="og:title" content="StructUtils.jl Documentation · StructUtils.jl"/><meta property="twitter:title" content="StructUtils.jl Documentation · StructUtils.jl"/><meta name="description" content="Documentation for StructUtils.jl."/><meta property="og:description" content="Documentation for StructUtils.jl."/><meta property="twitter:description" content="Documentation for StructUtils.jl."/><script data-outdated-warner src="assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="assets/documenter.js"></script><script src="search_index.js"></script><script src="siteinfo.js"></script><script src="../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href>StructUtils.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li class="is-active"><a class="tocitem" href>StructUtils.jl Documentation</a><ul class="internal"><li><a class="tocitem" href="#Installation"><span>Installation</span></a></li><li><a class="tocitem" href="#Quick-Start"><span>Quick Start</span></a></li><li><a class="tocitem" href="#Core-Concepts"><span>Core Concepts</span></a></li><li><a class="tocitem" href="#Struct-Styles"><span>Struct Styles</span></a></li><li><a class="tocitem" href="#Struct-Definition-Macros"><span>Struct Definition Macros</span></a></li><li><a class="tocitem" href="#Field-Tags-Syntax"><span>Field Tags Syntax</span></a></li><li><a class="tocitem" href="#The-make-Function"><span>The <code>make</code> Function</span></a></li><li><a class="tocitem" href="#Implementing-StructUtils-Interfaces"><span>Implementing StructUtils Interfaces</span></a></li><li><a class="tocitem" href="#Advanced-Features"><span>Advanced Features</span></a></li><li><a class="tocitem" href="#Complex-Example"><span>Complex Example</span></a></li><li><a class="tocitem" href="#Summary"><span>Summary</span></a></li></ul></li><li><a class="tocitem" href="reference/">API Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>StructUtils.jl Documentation</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>StructUtils.jl Documentation</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/JuliaServices/StructUtils.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/JuliaServices/StructUtils.jl/blob/main/docs/src/index.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="StructUtils.jl-Documentation"><a class="docs-heading-anchor" href="#StructUtils.jl-Documentation">StructUtils.jl Documentation</a><a id="StructUtils.jl-Documentation-1"></a><a class="docs-heading-anchor-permalink" href="#StructUtils.jl-Documentation" title="Permalink"></a></h1><p>StructUtils.jl provides flexible tools for working with Julia structs, making it easier to build, manipulate, and convert between different data structures. It offers macros for defining struct behaviors and a powerful <code>make</code> function for programmatic construction of objects from various data sources.</p><ul><li><a href="#StructUtils.jl-Documentation">StructUtils.jl Documentation</a></li><li class="no-marker"><ul><li><a href="#Installation">Installation</a></li><li><a href="#Quick-Start">Quick Start</a></li><li><a href="#Core-Concepts">Core Concepts</a></li><li><a href="#Struct-Styles">Struct Styles</a></li><li><a href="#Struct-Definition-Macros">Struct Definition Macros</a></li><li class="no-marker"><ul><li><a href="#@nonstruct-Non-struct-like-Types"><code>@nonstruct</code> - Non-struct-like Types</a></li><li><a href="#@noarg-No-argument-Constructor"><code>@noarg</code> - No-argument Constructor</a></li><li><a href="#@defaults-Default-Values"><code>@defaults</code> - Default Values</a></li><li><a href="#@kwarg-Keyword-Constructor"><code>@kwarg</code> - Keyword Constructor</a></li><li><a href="#@tags-Field-Metadata"><code>@tags</code> - Field Metadata</a></li></ul></li><li><a href="#Field-Tags-Syntax">Field Tags Syntax</a></li><li><a href="#The-make-Function">The <code>make</code> Function</a></li><li class="no-marker"><ul><li><a href="#How-make-Works">How <code>make</code> Works</a></li></ul></li><li><a href="#Implementing-StructUtils-Interfaces">Implementing StructUtils Interfaces</a></li><li class="no-marker"><ul><li><a href="#Type-Classification">Type Classification</a></li><li><a href="#Value-Conversion">Value Conversion</a></li><li><a href="#Field-Metadata">Field Metadata</a></li></ul></li><li><a href="#Advanced-Features">Advanced Features</a></li><li class="no-marker"><ul><li><a href="#Type-Selection-for-Abstract-Types">Type Selection for Abstract Types</a></li><li><a href="#The-Selectors-Module">The Selectors Module</a></li><li><a href="#Non-Struct-Like-Structs-with-@nonstruct">Non-Struct-Like Structs with <code>@nonstruct</code></a></li></ul></li><li><a href="#Complex-Example">Complex Example</a></li><li><a href="#Summary">Summary</a></li></ul></li></ul><h2 id="Installation"><a class="docs-heading-anchor" href="#Installation">Installation</a><a id="Installation-1"></a><a class="docs-heading-anchor-permalink" href="#Installation" title="Permalink"></a></h2><p>The package is registered in the <a href="https://github.com/JuliaRegistries/General"><code>General</code></a> registry and can be installed at the REPL with:</p><pre><code class="language-julia hljs">] add StructUtils</code></pre><h2 id="Quick-Start"><a class="docs-heading-anchor" href="#Quick-Start">Quick Start</a><a id="Quick-Start-1"></a><a class="docs-heading-anchor-permalink" href="#Quick-Start" title="Permalink"></a></h2><p>StructUtils.jl offers several key features:</p><ol><li><p><strong>Struct definition macros</strong> - Enhance struct definitions with special behaviors:</p><pre><code class="language-julia hljs">using StructUtils
+
+# Define a struct with default values
+@defaults struct Config
+    port::Int = 8080
+    host::String = &quot;localhost&quot;
+    debug::Bool = false
+end
+
+# Only need to provide non-default values
+config = Config(9000)  # Config(9000, &quot;localhost&quot;, false)</code></pre></li><li><p><strong>Programmatic object construction</strong> - Convert between different data representations:</p><pre><code class="language-julia hljs"># Convert a Dict to our Config struct
+dict = Dict(:port =&gt; 9000, :host =&gt; &quot;example.com&quot;)
+config = StructUtils.make(Config, dict)  # Config(9000, &quot;example.com&quot;, false)
+
+# Convert a Config back to a Dict
+dict_again = StructUtils.make(Dict{Symbol,Any}, config)  # Dict(:port =&gt; 9000, :host =&gt; &quot;example.com&quot;, :debug =&gt; false)</code></pre></li></ol><h2 id="Core-Concepts"><a class="docs-heading-anchor" href="#Core-Concepts">Core Concepts</a><a id="Core-Concepts-1"></a><a class="docs-heading-anchor-permalink" href="#Core-Concepts" title="Permalink"></a></h2><p>StructUtils.jl is built around several key concepts:</p><ol><li><strong>Struct Styles</strong> - Define customization points for handling different struct types</li><li><strong>Field Tags</strong> - Add metadata to struct fields for controlling serialization and deserialization</li><li><strong>Struct Macros</strong> - Enhance struct definitions with special behaviors</li><li><strong>The <code>make</code> function</strong> - Programmatically construct objects from various data sources</li></ol><p>Let&#39;s explore each of these concepts in detail.</p><h2 id="Struct-Styles"><a class="docs-heading-anchor" href="#Struct-Styles">Struct Styles</a><a id="Struct-Styles-1"></a><a class="docs-heading-anchor-permalink" href="#Struct-Styles" title="Permalink"></a></h2><p>At the core of StructUtils.jl is the concept of a <code>StructStyle</code>:</p><pre><code class="language-julia hljs">abstract type StructStyle end
+struct DefaultStyle &lt;: StructStyle end</code></pre><p>Struct styles provide a way to customize how structs are handled. The <code>DefaultStyle</code> is used by default, but you can create custom styles to override behavior for specific types, especially those you don&#39;t own:</p><pre><code class="language-julia hljs">struct MyCustomStyle &lt;: StructStyle end
+
+# Override behavior for a type you don&#39;t own
+StructUtils.lift(::MyCustomStyle, ::Type{UUID}, x::AbstractString) = UUID(x)</code></pre><p>This approach allows library authors to provide custom serialization/deserialization behavior for their types without modifying the original package.</p><h2 id="Struct-Definition-Macros"><a class="docs-heading-anchor" href="#Struct-Definition-Macros">Struct Definition Macros</a><a id="Struct-Definition-Macros-1"></a><a class="docs-heading-anchor-permalink" href="#Struct-Definition-Macros" title="Permalink"></a></h2><p>StructUtils.jl provides several macros to enhance struct definitions:</p><h3 id="@nonstruct-Non-struct-like-Types"><a class="docs-heading-anchor" href="#@nonstruct-Non-struct-like-Types"><code>@nonstruct</code> - Non-struct-like Types</a><a id="@nonstruct-Non-struct-like-Types-1"></a><a class="docs-heading-anchor-permalink" href="#@nonstruct-Non-struct-like-Types" title="Permalink"></a></h3><p>The <code>@nonstruct</code> macro marks a struct as not struct-like for StructUtils purposes. This is useful for custom types that should be treated as primitives rather than structs during serialization/deserialization:</p><pre><code class="language-julia hljs">@nonstruct struct Email
+    value::String
+end
+
+# Define conversion methods
+StructUtils.lift(::Type{Email}, x::String) = Email(x)
+StructUtils.lower(x::Email) = x.value
+
+# Now Email will be serialized as a string, not an object
+user = User(email=Email(&quot;alice@example.com&quot;))
+dict = StructUtils.make(Dict{String,Any}, user)  # email field is a string</code></pre><p><strong>Note</strong>: <code>@nonstruct</code> does not support field defaults, tags, or other StructUtils macros since you&#39;re explicitly opting out of struct-like behavior.</p><h3 id="@noarg-No-argument-Constructor"><a class="docs-heading-anchor" href="#@noarg-No-argument-Constructor"><code>@noarg</code> - No-argument Constructor</a><a id="@noarg-No-argument-Constructor-1"></a><a class="docs-heading-anchor-permalink" href="#@noarg-No-argument-Constructor" title="Permalink"></a></h3><p>The <code>@noarg</code> macro creates a no-argument constructor for mutable structs and allows setting default values:</p><pre><code class="language-julia hljs">@noarg mutable struct User
+    id::Int
+    name::String
+    created_at::DateTime = now()
+    active::Bool = true
+end
+
+# Now you can create a User without arguments
+user = User()  # Fields will be undefined except those with defaults
+user.id = 1
+user.name = &quot;Alice&quot;</code></pre><h3 id="@defaults-Default-Values"><a class="docs-heading-anchor" href="#@defaults-Default-Values"><code>@defaults</code> - Default Values</a><a id="@defaults-Default-Values-1"></a><a class="docs-heading-anchor-permalink" href="#@defaults-Default-Values" title="Permalink"></a></h3><p>The <code>@defaults</code> macro creates an additional constructor that allows omitting arguments with default values:</p><pre><code class="language-julia hljs">@defaults struct Point
+    x::Float64
+    y::Float64
+    z::Float64 = 0.0  # Default value
+end
+
+# You can omit the z argument
+point = Point(1.0, 2.0)  # Point(1.0, 2.0, 0.0)</code></pre><h3 id="@kwarg-Keyword-Constructor"><a class="docs-heading-anchor" href="#@kwarg-Keyword-Constructor"><code>@kwarg</code> - Keyword Constructor</a><a id="@kwarg-Keyword-Constructor-1"></a><a class="docs-heading-anchor-permalink" href="#@kwarg-Keyword-Constructor" title="Permalink"></a></h3><p>Similar to Base Julia&#39;s <code>@kwdef</code>, but with enhanced capabilities:</p><pre><code class="language-julia hljs">@kwarg struct HttpConfig
+    port::Int = 8080
+    host::String = &quot;localhost&quot;
+    timeout::Int = 30
+end
+
+# Create with keyword arguments
+config = HttpConfig(port=9000)  # HttpConfig(9000, &quot;localhost&quot;, 30)</code></pre><h3 id="@tags-Field-Metadata"><a class="docs-heading-anchor" href="#@tags-Field-Metadata"><code>@tags</code> - Field Metadata</a><a id="@tags-Field-Metadata-1"></a><a class="docs-heading-anchor-permalink" href="#@tags-Field-Metadata" title="Permalink"></a></h3><p>The <code>@tags</code> macro allows attaching metadata to struct fields using the <code>&amp;(...)</code> syntax:</p><pre><code class="language-julia hljs">@tags struct Person
+    id::Int &amp;(json=(name=&quot;person_id&quot;,),)
+    first_name::String &amp;(json=(name=&quot;firstName&quot;,),)
+    birth_date::Date &amp;(dateformat=&quot;yyyy-mm-dd&quot;,)
+    internal_note::String &amp;(json=(ignore=true,),)
+end</code></pre><p>Each field can have tags that control how it&#39;s handled by different libraries. For example:</p><ul><li><code>name</code> - Use a different name when serializing/deserializing</li><li><code>dateformat</code> - Specify a format for date parsing/formatting</li><li><code>ignore</code> - Skip this field during serialization/deserialization</li><li><code>lift</code>/<code>lower</code> - Custom functions to convert values during serialization/deserialization</li></ul><h2 id="Field-Tags-Syntax"><a class="docs-heading-anchor" href="#Field-Tags-Syntax">Field Tags Syntax</a><a id="Field-Tags-Syntax-1"></a><a class="docs-heading-anchor-permalink" href="#Field-Tags-Syntax" title="Permalink"></a></h2><p>Field tags use a special syntax: <code>&amp;(namespace=(key=value,),)</code>. The namespace (like <code>json</code>) allows different libraries to use their own tags without conflicts.</p><p>Common field tags include:</p><ul><li><code>name</code>: Alternative name to use when matching source keys</li><li><code>ignore</code>: Skip this field during serialization/deserialization (boolean)</li><li><code>dateformat</code>: Format string or <code>DateFormat</code> object for date fields</li><li><code>lift</code>: Function to convert source values to field type</li><li><code>lower</code>: Function to convert field values to serialization format</li><li><code>choosetype</code>: Function to determine concrete type for abstract fields</li></ul><p>Example of a field with multiple tags:</p><pre><code class="language-julia hljs">@tags struct Document
+    id::Int &amp;(json=(name=&quot;doc_id&quot;,), db=(column=&quot;document_id&quot;,))
+    created::DateTime &amp;(json=(dateformat=&quot;yyyy-mm-dd&quot;,), db=(column=&quot;creation_date&quot;,))
+    data::Any &amp;(json=(ignore=true,), db=(ignore=true,))
+end</code></pre><h2 id="The-make-Function"><a class="docs-heading-anchor" href="#The-make-Function">The <code>make</code> Function</a><a id="The-make-Function-1"></a><a class="docs-heading-anchor-permalink" href="#The-make-Function" title="Permalink"></a></h2><p>The core functionality of StructUtils.jl is in the <code>make</code> function, which creates an object of a specific type from a source object:</p><pre><code class="language-julia hljs">StructUtils.make(T, source) -&gt; T
+StructUtils.make(T, source, style) -&gt; T</code></pre><p>This function can convert between many kinds of objects:</p><pre><code class="language-julia hljs"># Convert a Dict to a struct
+user = StructUtils.make(User, Dict(&quot;id&quot; =&gt; 1, &quot;name&quot; =&gt; &quot;Alice&quot;))
+
+# Convert a struct to a Dict
+dict = StructUtils.make(Dict{String,Any}, user)
+
+# Convert a struct to a NamedTuple
+nt = StructUtils.make(NamedTuple, user)
+
+# Convert a JSON object to a struct (with JSON.jl)
+user = JSON.parse(json_string, User)  # Uses StructUtils.make under the hood</code></pre><h3 id="How-make-Works"><a class="docs-heading-anchor" href="#How-make-Works">How <code>make</code> Works</a><a id="How-make-Works-1"></a><a class="docs-heading-anchor-permalink" href="#How-make-Works" title="Permalink"></a></h3><p>The <code>make</code> function follows these steps:</p><ol><li><p><strong>Type Analysis</strong>: Determine if the target type is:</p><ul><li>Dictionary-like (<code>AbstractDict</code>, <code>Vector{Pair}</code>)</li><li>Array-like (<code>AbstractArray</code>, <code>Tuple</code>, <code>Set</code>)</li><li>No-arg constructible (<code>@noarg</code> or overridden <code>noarg</code> function)</li><li>Regular struct (default constructor)</li><li>Primitive type (requiring a <code>lift</code> function)</li></ul></li><li><p><strong>Object Construction</strong>:</p><ul><li>For dictionary-like types: Create an empty dictionary and add key-value pairs</li><li>For array-like types: Create an empty array and push values</li><li>For no-arg types: Create an empty instance and set fields</li><li>For regular structs: Collect field values and call the constructor</li><li>For primitive types: Use <code>lift</code> to convert the source value</li></ul></li><li><p><strong>Field Mapping</strong>:</p><ul><li>Match source keys to target fields, respecting field tags</li><li>Convert values to appropriate field types</li><li>Handle missing values, defaults, and special types</li></ul></li></ol><h2 id="Implementing-StructUtils-Interfaces"><a class="docs-heading-anchor" href="#Implementing-StructUtils-Interfaces">Implementing StructUtils Interfaces</a><a id="Implementing-StructUtils-Interfaces-1"></a><a class="docs-heading-anchor-permalink" href="#Implementing-StructUtils-Interfaces" title="Permalink"></a></h2><p>To make your types work well with StructUtils.jl, you can implement several interfaces:</p><h3 id="Type-Classification"><a class="docs-heading-anchor" href="#Type-Classification">Type Classification</a><a id="Type-Classification-1"></a><a class="docs-heading-anchor-permalink" href="#Type-Classification" title="Permalink"></a></h3><p>These functions determine how your type is handled by <code>make</code>:</p><pre><code class="language-julia hljs"># For dictionary-like types
+StructUtils.dictlike(::Type{MyDict}) = true
+
+# For array-like types
+StructUtils.arraylike(::Type{MyArray}) = true
+
+# For types with empty constructors
+StructUtils.noarg(::Type{MyType}) = true
+
+# For types with keyword constructors
+StructUtils.kwdef(::Type{MyType}) = true</code></pre><h3 id="Value-Conversion"><a class="docs-heading-anchor" href="#Value-Conversion">Value Conversion</a><a id="Value-Conversion-1"></a><a class="docs-heading-anchor-permalink" href="#Value-Conversion" title="Permalink"></a></h3><p>These functions control how values are converted during serialization/deserialization:</p><pre><code class="language-julia hljs"># Convert a source value to your type
+StructUtils.lift(::Type{MyType}, x) = MyType(x)
+
+# Convert a key to your type (for dictionary keys)
+StructUtils.liftkey(::Type{MyType}, x::String) = MyType(parse(Int, x))
+
+# Convert your type to a serializable form
+StructUtils.lower(x::MyType) = string(x)
+
+# Convert your type to a serializable key
+StructUtils.lowerkey(x::MyType) = string(x)</code></pre><h3 id="Field-Metadata"><a class="docs-heading-anchor" href="#Field-Metadata">Field Metadata</a><a id="Field-Metadata-1"></a><a class="docs-heading-anchor-permalink" href="#Field-Metadata" title="Permalink"></a></h3><p>These functions control field behavior:</p><pre><code class="language-julia hljs"># Define default values for fields
+StructUtils.fielddefaults(::StructUtils.StructStyle, ::Type{MyType}) = (field1=1, field2=&quot;default&quot;)
+
+# Define tags for fields
+StructUtils.fieldtags(::StructUtils.StructStyle, ::Type{MyType}) = (field1=(name=&quot;f1&quot;,), field2=(ignore=true,))
+
+# Define a namespace for field tags
+StructUtils.fieldtagkey(::MyStyle) = :mylib</code></pre><h2 id="Advanced-Features"><a class="docs-heading-anchor" href="#Advanced-Features">Advanced Features</a><a id="Advanced-Features-1"></a><a class="docs-heading-anchor-permalink" href="#Advanced-Features" title="Permalink"></a></h2><h3 id="Type-Selection-for-Abstract-Types"><a class="docs-heading-anchor" href="#Type-Selection-for-Abstract-Types">Type Selection for Abstract Types</a><a id="Type-Selection-for-Abstract-Types-1"></a><a class="docs-heading-anchor-permalink" href="#Type-Selection-for-Abstract-Types" title="Permalink"></a></h3><p>When working with abstract types, you need a way to determine the concrete type to construct. The <code>@choosetype</code> macro helps with this:</p><pre><code class="language-julia hljs">abstract type Vehicle end
+struct Car &lt;: Vehicle; make::String; model::String; end
+struct Truck &lt;: Vehicle; make::String; model::String; payload::Float64; end
+
+# Define how to choose concrete types based on source data
+StructUtils.@choosetype Vehicle x -&gt; x[&quot;type&quot;] == &quot;car&quot; ? Car : Truck
+
+# Now make can create the right type
+car = StructUtils.make(Vehicle, Dict(&quot;type&quot; =&gt; &quot;car&quot;, &quot;make&quot; =&gt; &quot;Toyota&quot;, &quot;model&quot; =&gt; &quot;Corolla&quot;))</code></pre><h3 id="The-Selectors-Module"><a class="docs-heading-anchor" href="#The-Selectors-Module">The Selectors Module</a><a id="The-Selectors-Module-1"></a><a class="docs-heading-anchor-permalink" href="#The-Selectors-Module" title="Permalink"></a></h3><p>StructUtils includes a <code>Selectors</code> module that provides a powerful way to query objects:</p><pre><code class="language-julia hljs">using StructUtils.Selectors
+
+# Create a nested structure
+data = Dict(&quot;users&quot; =&gt; List([
+    Dict(&quot;id&quot; =&gt; 1, &quot;name&quot; =&gt; &quot;Alice&quot;),
+    Dict(&quot;id&quot; =&gt; 2, &quot;name&quot; =&gt; &quot;Bob&quot;)
+]))
+
+# Query with selectors
+users = data[&quot;users&quot;]  # Get the users array
+names = users[:].name  # Get all user names</code></pre><p>The selector syntax supports various operations:</p><ul><li><code>x[&quot;key&quot;]</code> / <code>x.key</code> - Select by key</li><li><code>x[:]</code> - Select all values</li><li><code>x[~, &quot;key&quot;]</code> - Recursively select all values with key</li><li><code>x[:, (k,v) -&gt; Bool]</code> - Filter by predicate</li></ul><h3 id="Non-Struct-Like-Structs-with-@nonstruct"><a class="docs-heading-anchor" href="#Non-Struct-Like-Structs-with-@nonstruct">Non-Struct-Like Structs with <code>@nonstruct</code></a><a id="Non-Struct-Like-Structs-with-@nonstruct-1"></a><a class="docs-heading-anchor-permalink" href="#Non-Struct-Like-Structs-with-@nonstruct" title="Permalink"></a></h3><p>What if you have a custom struct that you want behave more like a primitive type rather than a struct?</p><p>The <code>@nonstruct</code> macro is perfect for this use case. By marking your struct as non-struct-like, you tell StructUtils to treat it as a primitive type that should be converted directly using <code>lift</code> and <code>lower</code> methods rather than constructing it from field values.</p><p>Here&#39;s an example of a custom email type that should be serialized as a JSON string:</p><pre><code class="language-julia hljs">@nonstruct struct Email
+    value::String
+    
+    function Email(value::String)
+        # Validate email format
+        if !occursin(r&quot;^[^@]+@[^@]+\.[^@]+$&quot;, value)
+            throw(ArgumentError(&quot;Invalid email format: $value&quot;))
+        end
+        new(value)
+    end
+end
+
+# Define how to convert from various sources to Email
+StructUtils.lift(::Type{Email}, x::String) = Email(x)
+
+# Define how to convert Email to a serializable format
+StructUtils.lower(x::Email) = x.value
+
+# Now you can use Email in your structs and it will be serialized as a string
+@defaults struct User
+    id::Int = 1
+    name::String = &quot;default&quot;
+    email::Email
+end
+
+# Create a user with an email
+user = User(email=Email(&quot;alice@example.com&quot;))
+
+# Convert to Dict - email will be a string, not an object
+dict = StructUtils.make(Dict{String,Any}, user)
+# Result: Dict(&quot;id&quot; =&gt; 1, &quot;name&quot; =&gt; &quot;default&quot;, &quot;email&quot; =&gt; &quot;alice@example.com&quot;)
+
+# Convert back from Dict
+user_again = StructUtils.make(User, dict)</code></pre><p>Another example - a custom numeric type that represents a percentage:</p><pre><code class="language-julia hljs">@nonstruct struct Percent &lt;: Number
+    value::Float64
+    
+    function Percent(value::Real)
+        if value &lt; 0 || value &gt; 100
+            throw(ArgumentError(&quot;Percentage must be between 0 and 100&quot;))
+        end
+        new(Float64(value))
+    end
+end
+
+# Convert from various numeric types
+StructUtils.lift(::Type{Percent}, x::Number) = Percent(x)
+StructUtils.lift(::Type{Percent}, x::String) = Percent(parse(Float64, x))
+
+# Convert to a simple number for serialization
+StructUtils.lower(x::Percent) = x.value
+
+# Use in a struct
+@defaults struct Product
+    name::String = &quot;default&quot;
+    discount::Percent = Percent(0.0)
+end
+
+# Create and serialize
+product = Product(discount=Percent(15.5))
+dict = StructUtils.make(Dict{String,Any}, product)
+# Result: Dict(&quot;name&quot; =&gt; &quot;default&quot;, &quot;discount&quot; =&gt; 15.5)</code></pre><p>The key points about <code>@nonstruct</code>:</p><ol><li><p><strong>No field defaults or tags</strong>: Since you&#39;re opting out of struct-like behavior, field defaults and tags are not supported.</p></li><li><p><strong>Requires <code>lift</code> and <code>lower</code> methods</strong>: You must define how to convert to/from your type.</p></li><li><p><strong>Fields are private</strong>: The struct&#39;s fields are considered implementation details for the <code>make</code> process.</p></li><li><p><strong>Perfect for wrapper types</strong>: Great for types that wrap primitives but need custom validation or behavior.</p></li></ol><h2 id="Complex-Example"><a class="docs-heading-anchor" href="#Complex-Example">Complex Example</a><a id="Complex-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Complex-Example" title="Permalink"></a></h2><p>Let&#39;s put everything together in a complex example, similar to the FrankenStruct example in the JSON.jl documentation:</p><pre><code class="language-julia hljs">using Dates, StructUtils
+
+# Abstract type for polymorphism
+abstract type AbstractMonster end
+
+struct Dracula &lt;: AbstractMonster
+    num_victims::Int
+end
+
+struct Werewolf &lt;: AbstractMonster
+    witching_hour::DateTime
+end
+
+# Type chooser for AbstractMonster
+StructUtils.@choosetype AbstractMonster x -&gt; 
+    x isa Dict &amp;&amp; haskey(x, &quot;monster_type&quot;) &amp;&amp; x[&quot;monster_type&quot;] == &quot;vampire&quot; ? 
+    Dracula : Werewolf
+
+# Custom numeric type with special parsing
+struct Percent &lt;: Number
+    value::Float64
+end
+
+# Custom value lifting
+StructUtils.lift(::Type{Percent}, x::Number) = Percent(Float64(x))
+StructUtils.liftkey(::Type{Percent}, x::String) = Percent(parse(Float64, x))
+
+# Our complex struct with various field types and defaults
+@defaults struct FrankenStruct
+    id::Int = 0
+    name::String = &quot;Jim&quot;
+    address::Union{Nothing, String} = nothing
+    rate::Union{Missing, Float64} = missing
+    type::Symbol = :a &amp;(json=(name=&quot;franken_type&quot;,),)
+    notsure::Any = nothing
+    monster::AbstractMonster = Dracula(0)
+    percent::Percent = Percent(0.0)
+    birthdate::Date = Date(0) &amp;(dateformat=&quot;yyyy/mm/dd&quot;,)
+    percentages::Dict{Percent, Int} = Dict{Percent, Int}()
+    matrix::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
+end
+
+# Create a FrankenStruct from a nested dictionary
+source = Dict(
+    &quot;id&quot; =&gt; 1,
+    &quot;address&quot; =&gt; &quot;123 Main St&quot;,
+    &quot;franken_type&quot; =&gt; &quot;b&quot;,
+    &quot;monster&quot; =&gt; Dict(&quot;monster_type&quot; =&gt; &quot;vampire&quot;, &quot;num_victims&quot; =&gt; 10),
+    &quot;percent&quot; =&gt; 0.1,
+    &quot;birthdate&quot; =&gt; &quot;2023/10/01&quot;,
+    &quot;percentages&quot; =&gt; Dict(&quot;0.1&quot; =&gt; 1, &quot;0.2&quot; =&gt; 2),
+    &quot;matrix&quot; =&gt; [[1.0, 2.0], [3.0, 4.0]]
+)
+
+# Create a FrankenStruct from the source
+frankenstein = StructUtils.make(FrankenStruct, source)
+
+# Convert it back to a dictionary
+dict_again = StructUtils.make(Dict{String,Any}, frankenstein)</code></pre><p>In this example:</p><ol><li>We define a polymorphic type hierarchy with <code>AbstractMonster</code></li><li>We implement custom type selection using <code>@choosetype</code></li><li>We define a custom numeric type <code>Percent</code> with special parsing</li><li>We create a complex struct with various field types and tags</li><li>We use <code>make</code> to create an instance from a nested dictionary</li></ol><h2 id="Summary"><a class="docs-heading-anchor" href="#Summary">Summary</a><a id="Summary-1"></a><a class="docs-heading-anchor-permalink" href="#Summary" title="Permalink"></a></h2><p>StructUtils.jl provides a comprehensive suite of tools for working with Julia structs:</p><ol><li><p><strong>Struct definition macros</strong> enhance structs with special behaviors:</p><ul><li><code>@noarg</code> - No-argument constructor for mutable structs</li><li><code>@defaults</code> - Default values for struct fields</li><li><code>@kwarg</code> - Keyword constructor</li><li><code>@tags</code> - Field metadata</li></ul></li><li><p><strong>Field tags</strong> provide metadata for fields:</p><ul><li><code>name</code> - Alternative name</li><li><code>ignore</code> - Skip during serialization/deserialization</li><li><code>dateformat</code> - Format for date fields</li><li><code>lift</code>/<code>lower</code> - Custom conversion functions</li></ul></li><li><p><strong>The <code>make</code> function</strong> converts between different data representations:</p><ul><li>Dict → Struct</li><li>Struct → Dict</li><li>Struct → NamedTuple</li><li>Array → Vector</li><li>etc.</li></ul></li><li><p><strong>Custom interfaces</strong> allow for specialized behavior:</p><ul><li>Type classification (<code>dictlike</code>, <code>arraylike</code>, etc.)</li><li>Value conversion (<code>lift</code>, <code>lower</code>, etc.)</li><li>Field metadata (<code>fielddefaults</code>, <code>fieldtags</code>, etc.)</li></ul></li></ol><p>StructUtils.jl integrates well with other packages like JSON.jl for seamless serialization and deserialization of complex Julia types.</p></article><nav class="docs-footer"><a class="docs-footer-nextpage" href="reference/">API Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.15.0 on <span class="colophon-date" title="Saturday 8 November 2025 06:31">Saturday 8 November 2025</span>. Using Julia version 1.12.1.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
