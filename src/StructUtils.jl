@@ -473,7 +473,7 @@ function find_needle_in_haystack(haystack, needle)
     ret isa StructUtils.EarlyReturn && return ret.value
     throw(ArgumentError("needle not found in haystack")
 end
-````
+```
 """
 struct EarlyReturn{T}
     value::T
