@@ -206,6 +206,63 @@ StructUtils.reset!(p)
 println("Q")
 @test StructUtils.make(Q, (id=0, value="application/json")) == Q(0, MIME("application/json"))
 
+@testset "applyeach with Pair" begin
+    # Basic functionality - collect key-value pairs
+    collected = []
+    ret = StructUtils.applyeach(StructUtils.DefaultStyle(), (k, v) -> push!(collected, (k, v)), :a => 42)
+    @test collected == [(:a, 42)]
+    @test ret === nothing
+
+    # Test EarlyReturn short-circuiting
+    collected = []
+    ret = StructUtils.applyeach(StructUtils.DefaultStyle(), (k, v) -> begin
+        push!(collected, (k, v))
+        return StructUtils.EarlyReturn("found")
+    end, :x => 100)
+    @test collected == [(:x, 100)]
+    @test ret isa StructUtils.EarlyReturn
+    @test ret.value == "found"
+
+    # Test that lowerkey and lower are applied
+    struct CustomStyle <: StructUtils.StructStyle end
+    StructUtils.lowerkey(::CustomStyle, x::Symbol) = string(x)
+    StructUtils.lower(::CustomStyle, x::Int) = x * 2
+    StructUtils.defaultstate(::CustomStyle) = :custom_state
+
+    collected = []
+    ret = StructUtils.applyeach(CustomStyle(), (k, v) -> push!(collected, (k, v)), :test => 5)
+    @test collected == [("test", 10)]  # key lowered to string, value doubled
+    @test ret === :custom_state
+
+    # Test EarlyReturn with custom style
+    collected = []
+    ret = StructUtils.applyeach(CustomStyle(), (k, v) -> begin
+        push!(collected, (k, v))
+        k == "test" && return StructUtils.EarlyReturn(:early)
+        return nothing
+    end, :test => 3)
+    @test collected == [("test", 6)]
+    @test ret isa StructUtils.EarlyReturn
+    @test ret.value === :early
+
+    # Test with nested structures
+    collected = []
+    StructUtils.applyeach(StructUtils.DefaultStyle(), (k, v) -> push!(collected, (k, v)), :nested => Dict(:a => 1, :b => 2))
+    @test length(collected) == 1
+    @test collected[1][1] === :nested
+    @test collected[1][2] == Dict(:a => 1, :b => 2)
+
+    # Test with nothing as value
+    collected = []
+    ret = StructUtils.applyeach(StructUtils.DefaultStyle(), (k, v) -> push!(collected, (k, v)), :key => nothing)
+    @test collected == [(:key, nothing)]
+    @test ret === nothing
+
+    # Test that make works with Pair as source
+    @test StructUtils.make(Dict{Symbol, Int}, :a => 1) == Dict(:a => 1)
+    @test StructUtils.make(NamedTuple{(:a,), Tuple{Int}}, :a => 42) == (a=42,)
+end
+
 @testset "multidimensional make" begin
     # 2D Int matrix from nested vectors
     x2 = StructUtils.make(Matrix{Int}, [[1, 3], [2, 4]])

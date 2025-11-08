@@ -501,6 +501,13 @@ function applyeach(st::StructStyle, f, x::AbstractVector{Pair{K,V}}) where {K,V}
     return defaultstate(st)
 end
 
+# special-case Pair to act like key-value object
+function applyeach(st::StructStyle, f, x::Pair)
+    ret = f(lowerkey(st, x.first), lower(st, x.second))
+    ret isa EarlyReturn && return ret
+    return defaultstate(st)
+end
+
 # appropriate definition for iterables that
 # can't have #undef values
 function applyeach(st::StructStyle, f, x::Union{AbstractSet,Base.Generator,Core.SimpleVector})
