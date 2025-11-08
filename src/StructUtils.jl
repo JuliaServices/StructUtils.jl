@@ -599,6 +599,7 @@ keyeq(a::Symbol, b::String) = a === Symbol(b)
 keyeq(a::String, b::Symbol) = Symbol(a) == b
 keyeq(a, b::String) = string(a) == b
 keyeq(a::AbstractString, b::String) = String(a) == b
+keyeq(a, b::Tuple) = any(keyeq(a), b)
 keyeq(a, b) = isequal(a, b)
 keyeq(x) = y -> keyeq(x, y)
 
@@ -926,7 +927,7 @@ function findfield(::Type{T}, k, v, f) where {T}
             fn = f.fsyms[i]
             ftags = fieldtags(f.style, T, fn)
             field = get(ftags, :name, fn)
-            if k == field
+            if keyeq(k, field) || keyeq(k, fn)
                 symval, symst = make(f.style, fieldtype(T, i), v, ftags)
                 setval!(f.vals, symval, i)
                 return EarlyReturn(symst)
