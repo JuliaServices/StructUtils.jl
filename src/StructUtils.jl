@@ -251,7 +251,9 @@ structlike(::Type{Missing}) = false
 structlike(::Type{UUID}) = false
 structlike(::Type{VersionNumber}) = false
 structlike(::Type{MIME}) = false
-structlike(@nospecialize(T)) = isstructtype(T) && !Base.issingletontype(T)
+structlike(::Type{<:NamedTuple}) = true
+structlike(@nospecialize(x)) = structlike(typeof(x))
+structlike(@nospecialize(T::Type)) = isstructtype(T) && !Base.issingletontype(T)
 
 """
   StructUtils.nulllike(x) -> Bool
