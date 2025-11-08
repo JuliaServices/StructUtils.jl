@@ -348,4 +348,20 @@ end
         @test fd.score == 0.0
     end
 
+    @testset "fielddefaults with field references" begin
+        # Test that fielddefaults works when one field's default references another field
+        # This fixes a bug where fielddefaults would throw UndefVarError when evaluating
+        # expressions like `b = a` because `a` wasn't in scope.
+        @kwarg struct X
+            a = 1
+            b = a
+        end
+        fd = StructUtils.fielddefaults(StructUtils.DefaultStyle(), X)
+        @test fd.a == 1
+        @test fd.b == 1
+        x = X()
+        @test x.a == 1
+        @test x.b == 1
+    end
+
 end # @testset "macros"
