@@ -326,4 +326,48 @@ end
     @test StructUtils.make(Dict{Symbol, Int}, (;)) == Dict{Symbol, Int}()
 end
 
+@testset "keyeq with Tuple" begin
+    # Test basic tuple functionality
+    @test StructUtils.keyeq(:a, ("a", "b", "c"))
+    @test StructUtils.keyeq("a", ("a", "b", "c"))
+    @test StructUtils.keyeq("b", ("a", "b", "c"))
+    @test StructUtils.keyeq("c", ("a", "b", "c"))
+    @test !StructUtils.keyeq("d", ("a", "b", "c"))
+    @test !StructUtils.keyeq(:d, ("a", "b", "c"))
+    
+    # Test with Symbol/String mixing
+    @test StructUtils.keyeq(:myfield, ("MyField", "myfield", "field_my"))
+    @test StructUtils.keyeq("MyField", ("MyField", "myfield", "field_my"))
+    @test StructUtils.keyeq("myfield", ("MyField", "myfield", "field_my"))
+    @test StructUtils.keyeq("field_my", ("MyField", "myfield", "field_my"))
+    @test !StructUtils.keyeq("other", ("MyField", "myfield", "field_my"))
+    
+    # Test with empty tuple
+    @test !StructUtils.keyeq("a", ())
+    
+    # Test with single element tuple
+    @test StructUtils.keyeq("a", ("a",))
+    @test !StructUtils.keyeq("b", ("a",))
+    
+    # Test that existing keyeq methods still work
+    @test StructUtils.keyeq(:a, "a")
+    @test StructUtils.keyeq("a", :a)
+    @test StructUtils.keyeq("a", "a")
+    @test StructUtils.keyeq(1, 1)
+    @test !StructUtils.keyeq(1, 2)
+    
+    # Test practical use case: struct with alternative field names
+    # Use name directly (not in a namespace) for DefaultStyle
+    @tags struct SomeStruct
+        my_field::Int & (name=("MyField", "myfield", "field_my"),)
+    end
+    
+    # Test that make works with different key names
+    @test StructUtils.make(SomeStruct, Dict("MyField" => 42)).my_field == 42
+    @test StructUtils.make(SomeStruct, Dict("myfield" => 43)).my_field == 43
+    @test StructUtils.make(SomeStruct, Dict("field_my" => 44)).my_field == 44
+    # Test that the original field name still works
+    @test StructUtils.make(SomeStruct, Dict(:my_field => 45)).my_field == 45
+end
+
 end
