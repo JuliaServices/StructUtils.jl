@@ -676,7 +676,7 @@ end
 
 function (f::MultiDimClosure{S,A})(i::Int, val) where {S,A}
     f.dims[f.cur_dim[]] = i
-    if arraylike(f.style, val)
+    if arraylike(f.style, val) && f.cur_dim[] > 1
         f.cur_dim[] -= 1
         st = applyeach(f, f.style, val)
         f.cur_dim[] += 1
