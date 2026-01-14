@@ -235,6 +235,8 @@ function parse_struct_def(kind, src, mod, expr)
         end
         generate_field_defaults_and_tags!(ret, T, fields)
     end
+    # Return the struct type for REPL friendliness (like Base.@kwdef)
+    push!(ret.args, T)
     return esc(ret)
 end
 
