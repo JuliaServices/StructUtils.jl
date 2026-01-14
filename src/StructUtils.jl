@@ -148,7 +148,9 @@ function fielddefaults end
 
 fielddefaults(::StructStyle, T::Type)::NamedTuple{(),Tuple{}} = (;)
 fielddefault(st::StructStyle, T::Type, key) = get(fielddefaults(st, T), key, nothing)
-@doc (@doc fielddefaults) fielddefault
+
+"See [`fielddefaults`](@ref)."
+fielddefault
 
 """
     StructUtils.initialize(::StructStyle, T, source) -> T
@@ -246,6 +248,8 @@ structlike(::Type{Symbol}) = false
 structlike(::Type{Regex}) = false
 structlike(::Type{<:Dates.TimeType}) = false
 structlike(::Type{Number}) = false
+structlike(::Type{BigInt}) = false
+structlike(::Type{BigFloat}) = false
 structlike(::Type{Nothing}) = false
 structlike(::Type{Missing}) = false
 structlike(::Type{UUID}) = false

@@ -326,6 +326,15 @@ end
     @test StructUtils.make(Dict{Symbol, Int}, (;)) == Dict{Symbol, Int}()
 end
 
+@testset "BigInt/BigFloat structlike" begin
+    # BigInt and BigFloat are mutable structs in Julia, but should be treated
+    # as non-struct types for serialization purposes (JuliaIO/JSON.jl#424)
+    @test StructUtils.structlike(BigInt) == false
+    @test StructUtils.structlike(BigFloat) == false
+    @test StructUtils.structlike(StructUtils.DefaultStyle(), BigInt) == false
+    @test StructUtils.structlike(StructUtils.DefaultStyle(), BigFloat) == false
+end
+
 @testset "keyeq with Tuple" begin
     # Test basic tuple functionality
     @test StructUtils.keyeq(:a, ("a", "b", "c"))
