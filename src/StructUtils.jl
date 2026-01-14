@@ -148,7 +148,9 @@ function fielddefaults end
 
 fielddefaults(::StructStyle, T::Type)::NamedTuple{(),Tuple{}} = (;)
 fielddefault(st::StructStyle, T::Type, key) = get(fielddefaults(st, T), key, nothing)
-@doc (@doc fielddefaults) fielddefault
+
+"See [`fielddefaults`](@ref)."
+fielddefault
 
 """
     StructUtils.initialize(::StructStyle, T, source) -> T
