@@ -168,7 +168,7 @@ initialize(st::StructStyle, T::Type, @nospecialize(source)) =
 
 function initialize(st::StructStyle, ::Type{A}, source) where {A<:AbstractArray}
     if ndims(A) > 1
-        dims = discover_dims(st, source)
+        dims = discover_dims(st, source, ndims(A))
         return A(undef, dims)
     else
         return A(undef, 0)
@@ -660,12 +660,16 @@ end # VERSION < v"1.10"
 # "[[[1.0],[2.0]]]" => (1, 2, 1)
 # "[[[1.0,2.0]]]" => (2, 1, 1)
 # length of innermost array is 1st dim
-function discover_dims(style, x)
+function discover_dims(style, x, ndims::Int)
     @assert arraylike(style, x)
     len = applylength(x)
+    if ndims == 1
+        return (len,)
+    end
+
     ret = (
         applyeach(x) do _, v
-            return arraylike(style, v) ? EarlyReturn(discover_dims(style, v)) : EarlyReturn(())
+            return arraylike(style, v) ? EarlyReturn(discover_dims(style, v, ndims - 1)) : EarlyReturn(())
         end
     )::EarlyReturn
     return (ret.value..., len)
