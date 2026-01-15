@@ -148,7 +148,9 @@ function fielddefaults end
 
 fielddefaults(::StructStyle, T::Type)::NamedTuple{(),Tuple{}} = (;)
 fielddefault(st::StructStyle, T::Type, key) = get(fielddefaults(st, T), key, nothing)
-@doc (@doc fielddefaults) fielddefault
+
+"See [`fielddefaults`](@ref)."
+fielddefault
 
 """
     StructUtils.initialize(::StructStyle, T, source) -> T
@@ -246,6 +248,8 @@ structlike(::Type{Symbol}) = false
 structlike(::Type{Regex}) = false
 structlike(::Type{<:Dates.TimeType}) = false
 structlike(::Type{Number}) = false
+structlike(::Type{BigInt}) = false
+structlike(::Type{BigFloat}) = false
 structlike(::Type{Nothing}) = false
 structlike(::Type{Missing}) = false
 structlike(::Type{UUID}) = false
@@ -471,7 +475,7 @@ function find_needle_in_haystack(haystack, needle)
         k == needle && return StructUtils.EarlyReturn(v)
     end
     ret isa StructUtils.EarlyReturn && return ret.value
-    throw(ArgumentError("needle not found in haystack")
+    throw(ArgumentError("needle not found in haystack"))
 end
 ```
 """
@@ -805,10 +809,10 @@ else
 end
 
 macro _t(i)
-    esc(:(@inbounds(vals[$i]::fieldtype(T, $i))))
+    esc(:(isassigned(vals, $i) ? @inbounds(vals[$i])::fieldtype(T, $i) : fielddefault(style, T, $i)::fieldtype(T, $i)))
 end
 
-@generated function _tuple(::Type{T}, vals) where {T}
+@generated function _tuple(::Type{T}, vals, style) where {T}
     n = fieldcount(T)
     ex = Expr(:block)
     push!(ex.args, :(Base.@_inline_meta))
@@ -849,7 +853,7 @@ function maketuple(style, ::Type{T}, source) where {T}
     GC.@preserve ref begin
         i = Base.unsafe_convert(Ptr{Int}, ref)
         st = applyeach(style, TupleClosure{T,typeof(vals),typeof(style)}(vals, style, i), source)
-        return _tuple(T, vals), st
+        return _tuple(T, vals, style), st
     end
 end
 
@@ -983,7 +987,7 @@ function makestruct(style, ::Type{T}, source) where {T}
     fstrs = fieldnamestrings(T)
     st = applyeach(style, StructClosure{T}(vals, style, fsyms, fstrs), source)
     if T <: NamedTuple
-        return T(_tuple(T, vals)), st
+        return T(_tuple(T, vals, style)), st
     else
         return _construct(T, vals, style, fsyms), st
     end
