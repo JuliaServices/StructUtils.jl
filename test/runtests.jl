@@ -288,6 +288,22 @@ end
     # fill slice [:, :, 2] from second slab [[3,4]]
     exp3[:, :, 2] = reshape([3,4], 2, 1)
     @test x3 == exp3
+
+    # Jagged nested vectors (Vector of Vectors)
+    jagged = [[1, 2], [3, 4, 5], [6]]
+    result = StructUtils.make(Vector{Vector{Int}}, jagged)
+    @test result == jagged
+
+    # Multi-dimensional case with jagged inner vectors
+    vv_jagged = [[[1, 2], [3]], [[4, 5, 6], [7, 8]]]
+    result_md = StructUtils.make(Array{Vector{Int}, 2}, vv_jagged)
+
+    md_jagged = Array{Vector{Int}}(undef, 2, 2)
+    md_jagged[1, 1] = [1, 2]
+    md_jagged[2, 1] = [3]
+    md_jagged[1, 2] = [4, 5, 6]
+    md_jagged[2, 2] = [7, 8]
+    @test result_md == md_jagged
 end
 
 @testset "@nonstruct macro" begin
