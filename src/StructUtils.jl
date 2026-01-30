@@ -220,6 +220,25 @@ arraylike(::Type{<:Core.SimpleVector}) = true
 arraylike(@nospecialize(T)) = false
 
 """
+    StructUtils.fixedsizearray(::Type{T}) -> Bool
+    StructUtils.fixedsizearray(::StructStyle, ::Type{T}) -> Bool
+
+Returns `true` if `T` is a fixed-size array type that should be pre-allocated
+and filled via `setindex!` rather than grown via `push!`. The default
+implementation returns `true` for multidimensional `<:AbstractArray` types
+(ndims > 1) and `false` for everything else.
+
+Override this for custom array types that have a fixed, known size but
+are not growable (e.g. `StaticArrays.StaticArray`).
+"""
+function fixedsizearray end
+
+fixedsizearray(::Type) = false
+fixedsizearray(::Type{<:AbstractArray{T,N}}) where {T,N} = N > 1
+fixedsizearray(::Type{<:AbstractSet}) = false
+fixedsizearray(st::StructStyle, ::Type{T}) where {T} = fixedsizearray(T)
+
+"""
     StructUtils.structlike(x) -> Bool
     StructUtils.structlike(::StructStyle, x) -> Bool
     StructUtils.structlike(::StructStyle, ::Type{T}) -> Bool
@@ -671,6 +690,29 @@ function discover_dims(style, x)
     return (ret.value..., len)
 end
 
+"""
+    StructUtils.discover_dims(style, ::Type{T}, source) -> Tuple
+
+Discover the dimensions for a fixed-size array type `T`. By default,
+delegates to `discover_dims(style, source)` to scan the source object.
+Override for types where dimensions are encoded in the type itself
+(e.g. `StaticArrays.StaticArray`), avoiding the need to scan the source.
+"""
+discover_dims(style, ::Type{T}, source) where {T} = discover_dims(style, source)
+
+"""
+    StructUtils.arrayfromdata(::Type{T}, mem, dims::Tuple) -> T
+
+Convert a filled data buffer `mem` with shape `dims` into the target array
+type `T`. Called at the end of `makearray` for `fixedsizearray` types.
+"""
+function arrayfromdata end
+
+if VERSION >= v"1.11"
+    arrayfromdata(::Type{T}, mem::Memory, dims::Tuple) where {T<:AbstractArray} =
+        Base.wrap(Array, Base.memoryref(mem), dims)
+end
+
 struct MultiDimClosure{S,A}
     style::S
     arr::A
@@ -886,7 +928,38 @@ function (f::ArrayClosure{T,S})(_, v) where {T,S}
     return st
 end
 
-makearray(style, ::Type{T}, source) where {T} = @inline makearray(style, initialize(style, T, source), source)
+struct FixedArrayClosure{A,S}
+    arr::A
+    style::S
+    idx::Base.RefValue{Int}
+end
+
+function (f::FixedArrayClosure{A,S})(_, v) where {A,S}
+    val, st = make(f.style, eltype(f.arr), v)
+    i = f.idx[]
+    @inbounds f.arr[i] = val
+    f.idx[] = i + 1
+    return st
+end
+
+function makearray(style, ::Type{T}, source) where {T}
+    if VERSION >= v"1.11" && fixedsizearray(style, T)
+        ET = eltype(T)
+        dims = discover_dims(style, T, source)
+        L = prod(dims)
+        mem = Memory{ET}(undef, L)
+        N = length(dims)
+        if N > 1
+            buf = reshape(mem, dims)
+            st = applyeach(style, MultiDimClosure(style, buf, ones(Int, N), Ref(N)), source)
+        else
+            st = applyeach(style, FixedArrayClosure(mem, style, Ref(1)), source)
+        end
+        return arrayfromdata(T, mem, dims), st
+    else
+        return @inline makearray(style, initialize(style, T, source), source)
+    end
+end
 
 function makearray(style, x::T, source) where {T}
     if !(T <: AbstractSet) && ndims(T) > 1
