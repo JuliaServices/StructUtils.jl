@@ -708,6 +708,9 @@ type `T`. Called at the end of `makearray` for `fixedsizearray` types.
 """
 function arrayfromdata end
 
+arrayfromdata(::Type{T}, buf::Vector, dims::Tuple) where {T<:AbstractArray} =
+    reshape(buf, dims)
+
 if VERSION >= v"1.11"
     arrayfromdata(::Type{T}, mem::Memory, dims::Tuple) where {T<:AbstractArray} =
         Base.wrap(Array, Base.memoryref(mem), dims)
@@ -943,19 +946,23 @@ function (f::FixedArrayClosure{A,S})(_, v) where {A,S}
 end
 
 function makearray(style, ::Type{T}, source) where {T}
-    if VERSION >= v"1.11" && fixedsizearray(style, T)
+    if fixedsizearray(style, T)
         ET = eltype(T)
         dims = discover_dims(style, T, source)
         L = prod(dims)
-        mem = Memory{ET}(undef, L)
+        if VERSION >= v"1.11"
+            data = Memory{ET}(undef, L)
+        else
+            data = Vector{ET}(undef, L)
+        end
         N = length(dims)
         if N > 1
-            buf = reshape(mem, dims)
+            buf = reshape(data, dims)
             st = applyeach(style, MultiDimClosure(style, buf, ones(Int, N), Ref(N)), source)
         else
-            st = applyeach(style, FixedArrayClosure(mem, style, Ref(1)), source)
+            st = applyeach(style, FixedArrayClosure(data, style, Ref(1)), source)
         end
-        return arrayfromdata(T, mem, dims), st
+        return arrayfromdata(T, data, dims), st
     else
         return @inline makearray(style, initialize(style, T, source), source)
     end
