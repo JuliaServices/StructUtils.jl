@@ -55,6 +55,9 @@ const KeyInd = Union{AbstractString, Symbol}
 const Inds = Union{AbstractVector{<:KeyInd}, NTuple{N, <:KeyInd} where {N},
     AbstractVector{<:Integer}, NTuple{N, <:Integer} where {N}}
 
+# Union of all valid single-argument selector index types
+const SelectorIndex = Union{KeyInd, Integer, Colon, Inds}
+
 function _getindex_array(x, key::Union{KeyInd, Integer})
     values = List()
     StructUtils.applyeach(x) do _, item
@@ -215,7 +218,7 @@ end
 # convenience macro for defining high-level getindex/getproperty methods
 macro selectors(T)
     esc(quote
-        Base.getindex(x::$T, arg) = StructUtils.Selectors._getindex(x, arg)
+        Base.getindex(x::$T, arg::StructUtils.Selectors.SelectorIndex) = StructUtils.Selectors._getindex(x, arg)
         Base.getindex(x::$T, ::Colon, arg) = StructUtils.Selectors._getindex(x, :, arg)
         Base.getindex(x::$T, ::typeof(~), arg) = StructUtils.Selectors._getindex(x, ~, arg)
         Base.getindex(x::$T, ::typeof(~), key, val) = StructUtils.Selectors._getindex(x, ~, key, val)
