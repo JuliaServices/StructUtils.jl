@@ -18,7 +18,7 @@ struct FieldError <: Exception
 end
 
 function Base.showerror(io::IO, e::FieldError)
-    print(io, "FieldError: failed to parse field `$(e.field_name)::$(e.field_type)` of `$(e.struct_type)`: ")
+    print(io, "FieldError: $(e.struct_type).$(e.field_name)::$(e.field_type): ")
     showerror(io, e.error)
 end
 
