@@ -2,7 +2,25 @@ module StructUtils
 
 using Dates, UUIDs
 
-export @noarg, @defaults, @tags, @kwarg, @nonstruct, Selectors
+export @noarg, @defaults, @tags, @kwarg, @nonstruct, Selectors, FieldError
+
+"""
+    StructUtils.FieldError
+
+Error thrown when a field fails to parse during struct construction.
+Contains the struct type, field name, expected type, and the underlying error.
+"""
+struct FieldError <: Exception
+    struct_type::Type
+    field_name::Symbol
+    field_type::Type
+    error::Exception
+end
+
+function Base.showerror(io::IO, e::FieldError)
+    print(io, "FieldError: $(e.struct_type).$(e.field_name)::$(e.field_type): ")
+    showerror(io, e.error)
+end
 
 """
     StructUtils.StructStyle
@@ -925,6 +943,20 @@ end
 
 setval!(vals::T, x, i) where {T} = _setfield!(vals, i, x)
 
+function _make_field(f, ::Type{T}, i, v) where {T}
+    fn = f.fsyms[i]
+    FT = fieldtype(T, i)
+    ftags = fieldtags(f.style, T, fn)
+    try
+        val, st = make(f.style, FT, v, ftags)
+        setval!(f.vals, val, i)
+        return EarlyReturn(st)
+    catch e
+        e isa FieldError && rethrow()
+        throw(FieldError(T, fn, FT, e))
+    end
+end
+
 function findfield(::Type{T}, k, v, f) where {T}
     st = _foreach(T) do i
         if typeof(k) == Symbol
@@ -932,16 +964,11 @@ function findfield(::Type{T}, k, v, f) where {T}
             ftags = fieldtags(f.style, T, fn)
             field = get(ftags, :name, fn)
             if keyeq(k, field) || keyeq(k, fn)
-                symval, symst = make(f.style, fieldtype(T, i), v, ftags)
-                setval!(f.vals, symval, i)
-                return EarlyReturn(symst)
+                return _make_field(f, T, i, v)
             end
         elseif typeof(k) == Int
             if k == i
-                ftags = fieldtags(f.style, T, f.fsyms[i])
-                intval, intst = make(f.style, fieldtype(T, i), v, ftags)
-                setval!(f.vals, intval, i)
-                return EarlyReturn(intst)
+                return _make_field(f, T, i, v)
             end
         else
             fn = f.fsyms[i]
@@ -949,9 +976,7 @@ function findfield(::Type{T}, k, v, f) where {T}
             ftags = fieldtags(f.style, T, fn)
             field = get(ftags, :name, fstr)
             if keyeq(k, field)
-                strval, strst = make(f.style, fieldtype(T, i), v, ftags)
-                setval!(f.vals, strval, i)
-                return EarlyReturn(strst)
+                return _make_field(f, T, i, v)
             end
         end
     end
@@ -989,6 +1014,16 @@ function makestruct(style, ::Type{T}, source) where {T}
     if T <: NamedTuple
         return T(_tuple(T, vals, style)), st
     else
+        # Check for missing required fields before construction
+        for i in 1:fieldcount(T)
+            if !isassigned(vals, i)
+                try
+                    fielddefault(style, T, fsyms[i])::fieldtype(T, i)
+                catch e
+                    throw(FieldError(T, fsyms[i], fieldtype(T, i), ArgumentError("required field is missing from input")))
+                end
+            end
+        end
         return _construct(T, vals, style, fsyms), st
     end
 end
