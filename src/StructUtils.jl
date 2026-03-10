@@ -1020,7 +1020,7 @@ function makestruct(style, ::Type{T}, source) where {T}
                 try
                     fielddefault(style, T, fsyms[i])::fieldtype(T, i)
                 catch e
-                    throw(FieldError(T, fsyms[i], fieldtype(T, i), ArgumentError("missing required field")))
+                    throw(FieldError(T, fsyms[i], fieldtype(T, i), ArgumentError("required field is missing from input")))
                 end
             end
         end
