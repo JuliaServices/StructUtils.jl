@@ -5,9 +5,45 @@ const _TRIM_SUPPORTED = VERSION >= v"1.12.0-rc1"
 const _TRIM_PRE_RELEASE = !isempty(VERSION.prerelease)
 const _JULIAC_ENTRYPOINT_EXPR = "using JuliaC; if isdefined(JuliaC, :main); JuliaC.main(ARGS); else JuliaC._main_cli(ARGS); end"
 
+# Pkg.test() sets JULIA_LOAD_PATH restrictively, which prevents subprocesses
+# from finding stdlib packages like Pkg.  Strip it so subprocesses get the
+# default load path.
+function _clean_cmd(cmd::Cmd)
+    return addenv(cmd, "JULIA_LOAD_PATH" => "@:@stdlib")
+end
+
+function _setup_trim_env()
+    # JuliaC requires Julia 1.12+ and can't be in [extras] without breaking
+    # Pkg.test() on older Julia versions.  Create a temp project that dev's
+    # StructUtils from the local checkout and adds JuliaC.
+    su_path = normpath(joinpath(@__DIR__, ".."))
+    env_path = mktempdir()
+    julia = joinpath(Sys.BINDIR, Base.julia_exename())
+    setup_script = joinpath(env_path, "setup.jl")
+    write(setup_script, """
+    import Pkg
+    Pkg.develop(path=$(repr(su_path)))
+    Pkg.add("JuliaC")
+    """)
+    println("[trim] setting up temp environment with JuliaC...")
+    flush(stdout)
+    exit_code, output, timed_out = _run_command_with_timeout(
+        _clean_cmd(`$julia --startup-file=no --history-file=no --project=$env_path $setup_script`);
+        timeout_s = 120.0, log_label = "setup"
+    )
+    rm(setup_script; force = true)
+    if exit_code != 0 || timed_out
+        println("[trim] setup FAILED (exit=$exit_code, timed_out=$timed_out)")
+        println(output)
+        error("failed to set up trim test environment")
+    end
+    println("[trim] temp environment ready")
+    return env_path
+end
+
 function _run_trim_compile(project_path::String, script_path::String, output_name::String; timeout_s::Float64 = 120.0)
     julia_exe = joinpath(Sys.BINDIR, Base.julia_exename())
-    cmd = `$julia_exe --startup-file=no --history-file=no --code-coverage=none --project=$project_path -e $(_JULIAC_ENTRYPOINT_EXPR) -- --output-exe $output_name --project=$project_path --experimental --trim=safe $script_path`
+    cmd = _clean_cmd(`$julia_exe --startup-file=no --history-file=no --code-coverage=none --project=$project_path -e $(_JULIAC_ENTRYPOINT_EXPR) -- --output-exe $output_name --project=$project_path --experimental --trim=safe $script_path`)
     return _run_command_with_timeout(cmd; timeout_s = timeout_s, log_label = "compile")
 end
 
@@ -62,6 +98,11 @@ function _parse_trim_verify_totals(output::String)
     return parse(Int, m.captures[1]), parse(Int, m.captures[2])
 end
 
+function _trim_executable_timeout_s()::Float64
+    default = Sys.iswindows() ? "120.0" : "30.0"
+    return parse(Float64, get(ENV, "STRUCTUTILS_TRIM_EXE_TIMEOUT_S", default))
+end
+
 function _run_trim_case(project_path::String, script_file::String, output_name::String)
     script_path = joinpath(@__DIR__, script_file)
     @test isfile(script_path)
@@ -93,7 +134,7 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
             if trim_errors == 0
                 @test exit_code == 0
                 @test isfile(output_path)
-                run_timeout_s = parse(Float64, get(ENV, "STRUCTUTILS_TRIM_EXE_TIMEOUT_S", "30.0"))
+                run_timeout_s = _trim_executable_timeout_s()
                 run_cmd = `$(abspath(output_path))`
                 run_exit, run_output, run_timed_out = _run_command_with_timeout(run_cmd; timeout_s = run_timeout_s, log_label = "run")
                 if run_timed_out
@@ -124,7 +165,7 @@ end
         println("[trim] skip prerelease Julia: trim verifier behavior is not stable yet")
         @test true
     else
-        project_path = normpath(joinpath(@__DIR__, ".."))
+        project_path = _setup_trim_env()
         trim_workloads = [
             ("make_trim_safe.jl", "make_trim_safe"),
         ]
