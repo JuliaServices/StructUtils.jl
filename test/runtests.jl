@@ -453,4 +453,22 @@ end
     @test StructUtils.make(SomeStruct, Dict(:my_field => 45)).my_field == 45
 end
 
+using StaticArrays
+
+@testset "fixedsizearray trait" begin
+    @test StructUtils.fixedsizearray(Matrix{Int}) == true
+    @test StructUtils.fixedsizearray(Array{Float64, 3}) == true
+    @test StructUtils.fixedsizearray(Vector{Int}) == false
+    @test StructUtils.fixedsizearray(Set{Int}) == false
+    @test StructUtils.fixedsizearray(SVector{3, Int}) == true
+end
+
+@testset "StaticArrays" begin
+    @test StructUtils.make(SVector{3,Int}, [1, 2, 3]) == SVector{3,Int}((1, 2, 3))
+    @test StructUtils.make(SVector{2,Float64}, [1, 2]) == SVector{2,Float64}((1.0, 2.0))
+    @test StructUtils.make(SMatrix{2,2,Int}, [[1, 3], [2, 4]]) == SMatrix{2,2,Int}((1, 3, 2, 4))
+    @test StructUtils.make(MVector{3,Int}, [1, 2, 3]) == MVector{3,Int}((1, 2, 3))
+    @test StructUtils.make(Vector{SVector{2,Int}}, [[1, 2], [3, 4]]) == [SVector{2,Int}((1, 2)), SVector{2,Int}((3, 4))]
+end
+
 end
