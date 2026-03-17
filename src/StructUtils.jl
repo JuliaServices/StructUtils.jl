@@ -698,11 +698,11 @@ end
     StructUtils.discover_dims(style, ::Type{T}, source) -> Tuple
 
 Discover the dimensions for a fixed-size array type `T`. By default,
-delegates to `discover_dims(style, source)` to scan the source object.
+delegates to `discover_dims(style, source, ndims(T))` to scan the source object.
 Override for types where dimensions are encoded in the type itself
 (e.g. `StaticArrays.StaticArray`), avoiding the need to scan the source.
 """
-discover_dims(style, ::Type{T}, source) where {T} = discover_dims(style, source)
+discover_dims(style, ::Type{T}, source) where {T} = discover_dims(style, source, ndims(T))
 
 """
     StructUtils.arrayfromdata(::Type{T}, mem, dims::Tuple) -> T
