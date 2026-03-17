@@ -762,6 +762,9 @@ function make(style::StructStyle, T::Type, source, tags)
                 return make(style, Base.nonnothingtype(T), source, tags)
             end
         end
+        # for Union types like Union{T, Vector{T}} (after Nothing/Missing have been peeled),
+        # we can disambiguate by checking if source is arraylike;
+        # only applies when there's exactly one arraylike and one non-arraylike member
         if T isa Union
             types = Base.uniontypes(T)
             arr_type = nothing
@@ -769,6 +772,7 @@ function make(style::StructStyle, T::Type, source, tags)
             ambiguous = false
             for t in types
                 if arraylike(style, t)
+                    # more than one arraylike type means we can't disambiguate
                     if arr_type !== nothing
                         ambiguous = true
                         break
@@ -814,8 +818,9 @@ function make(style::StructStyle, T::Type, source)
                 return make(style, Base.nonnothingtype(T), source)
             end
         end
-        # Union with a mix of arraylike and non-arraylike types:
-        # disambiguate based on whether the source is arraylike
+        # for Union types like Union{T, Vector{T}} (after Nothing/Missing have been peeled),
+        # we can disambiguate by checking if source is arraylike;
+        # only applies when there's exactly one arraylike and one non-arraylike member
         if T isa Union
             types = Base.uniontypes(T)
             arr_type = nothing
@@ -823,6 +828,7 @@ function make(style::StructStyle, T::Type, source)
             ambiguous = false
             for t in types
                 if arraylike(style, t)
+                    # more than one arraylike type means we can't disambiguate
                     if arr_type !== nothing
                         ambiguous = true
                         break
