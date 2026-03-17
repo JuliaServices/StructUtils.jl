@@ -326,6 +326,80 @@ end
     @test StructUtils.make(Dict{Symbol, Int}, (;)) == Dict{Symbol, Int}()
 end
 
+@testset "Union{scalar, array} disambiguation" begin
+    # basic: scalar source → scalar type, array source → array type
+    @test StructUtils.make(ScalarOrVec, (val=3.14,)).val === 3.14
+    @test StructUtils.make(ScalarOrVec, (val=[1.0, 2.0],)).val == [1.0, 2.0]
+    @test StructUtils.make(ScalarOrVec, (val=[1.0, 2.0],)).val isa Vector{Float64}
+
+    # Any-typed sources (the case that actually fails without disambiguation)
+    @test StructUtils.make(ScalarOrVec, Dict{String,Any}("val" => 3.14)).val === 3.14
+    x = StructUtils.make(ScalarOrVec, Dict{String,Any}("val" => Any[1.0, 2.0]))
+    @test x.val isa Vector{Float64}
+    @test x.val == [1.0, 2.0]
+
+    # String variant
+    @test StructUtils.make(ScalarOrVecStr, (val="hello",)).val == "hello"
+    x = StructUtils.make(ScalarOrVecStr, Dict{String,Any}("val" => Any["a", "b"]))
+    @test x.val isa Vector{String}
+    @test x.val == ["a", "b"]
+
+    # Int variant
+    @test StructUtils.make(ScalarOrVecInt, (val=42,)).val === 42
+    x = StructUtils.make(ScalarOrVecInt, Dict{String,Any}("val" => Any[1, 2, 3]))
+    @test x.val isa Vector{Int}
+    @test x.val == [1, 2, 3]
+
+    # with Nothing — Nothing is peeled first, then array/scalar split
+    @test StructUtils.make(ScalarOrVecNothing, (val=nothing,)).val === nothing
+    @test StructUtils.make(ScalarOrVecNothing, (val=5,)).val === 5
+    x = StructUtils.make(ScalarOrVecNothing, Dict{String,Any}("val" => Any[1, 2]))
+    @test x.val isa Vector{Int}
+    @test x.val == [1, 2]
+
+    # with Missing — Missing is peeled first, then array/scalar split
+    @test StructUtils.make(ScalarOrVecMissing, (val=missing,)) == ScalarOrVecMissing(missing)
+    @test StructUtils.make(ScalarOrVecMissing, (val=1.5,)).val === 1.5
+    x = StructUtils.make(ScalarOrVecMissing, Dict{String,Any}("val" => Any[1.0, 2.0]))
+    @test x.val isa Vector{Float64}
+    @test x.val == [1.0, 2.0]
+
+    # empty array → array type
+    x = StructUtils.make(ScalarOrVec, (val=Float64[],))
+    @test x.val isa Vector{Float64}
+    @test isempty(x.val)
+
+    # nested struct with Union field
+    x = StructUtils.make(ScalarOrVecNested, Dict{String,Any}("id" => 1, "data" => Any[1.0, 2.0, 3.0]))
+    @test x.id == 1
+    @test x.data isa Vector{Float64}
+    @test x.data == [1.0, 2.0, 3.0]
+    x = StructUtils.make(ScalarOrVecNested, (id=1, data=3.14))
+    @test x.id == 1
+    @test x.data === 3.14
+
+    # the original issue: Tuple with complex nested Union types
+    x = StructUtils.make(FrankenTuple, (params=(nothing, [1.0, 2.0, 3.0], nothing),))
+    @test x.params[1] === nothing
+    @test x.params[2] isa Vector{Float64}
+    @test x.params[2] == [1.0, 2.0, 3.0]
+    @test x.params[3] === nothing
+    # same tuple, all scalars
+    x = StructUtils.make(FrankenTuple, (params=(1.0, 2.0, 3.0),))
+    @test x.params[1] === 1.0
+    @test x.params[2] === 2.0
+    @test x.params[3] === 3.0
+
+    # ambiguous: two arraylike types → should NOT be handled, falls through
+    @test_throws Exception StructUtils.make(@NamedTuple{val::Union{Vector{Int}, Set{Int}}}, Dict{String,Any}("val" => Any[1, 2]))
+
+    # Vector of structs with Union fields
+    x = StructUtils.make(Vector{ScalarOrVec}, [(val=1.0,), (val=[2.0, 3.0],)])
+    @test x[1].val === 1.0
+    @test x[2].val isa Vector{Float64}
+    @test x[2].val == [2.0, 3.0]
+end
+
 @testset "BigInt/BigFloat structlike" begin
     # BigInt and BigFloat are mutable structs in Julia, but should be treated
     # as non-struct types for serialization purposes (JuliaIO/JSON.jl#424)

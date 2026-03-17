@@ -762,6 +762,38 @@ function make(style::StructStyle, T::Type, source, tags)
                 return make(style, Base.nonnothingtype(T), source, tags)
             end
         end
+        # for Union types like Union{T, Vector{T}} (after Nothing/Missing have been peeled),
+        # we can disambiguate by checking if source is arraylike;
+        # only applies when there's exactly one arraylike and one non-arraylike member
+        if T isa Union
+            types = Base.uniontypes(T)
+            arr_type = nothing
+            scalar_type = nothing
+            ambiguous = false
+            for t in types
+                if arraylike(style, t)
+                    # more than one arraylike type means we can't disambiguate
+                    if arr_type !== nothing
+                        ambiguous = true
+                        break
+                    end
+                    arr_type = t
+                else
+                    if scalar_type !== nothing
+                        ambiguous = true
+                        break
+                    end
+                    scalar_type = t
+                end
+            end
+            if !ambiguous && arr_type !== nothing && scalar_type !== nothing
+                if arraylike(style, source)
+                    return make(style, arr_type, source, tags)
+                else
+                    return make(style, scalar_type, source, tags)
+                end
+            end
+        end
     end
     if T <: Tuple || dictlike(style, T) || arraylike(style, T) || noarg(style, T) || structlike(style, T)
         return make(style, T, source)
@@ -784,6 +816,38 @@ function make(style::StructStyle, T::Type, source)
                 return make(style, Nothing, source)
             else
                 return make(style, Base.nonnothingtype(T), source)
+            end
+        end
+        # for Union types like Union{T, Vector{T}} (after Nothing/Missing have been peeled),
+        # we can disambiguate by checking if source is arraylike;
+        # only applies when there's exactly one arraylike and one non-arraylike member
+        if T isa Union
+            types = Base.uniontypes(T)
+            arr_type = nothing
+            scalar_type = nothing
+            ambiguous = false
+            for t in types
+                if arraylike(style, t)
+                    # more than one arraylike type means we can't disambiguate
+                    if arr_type !== nothing
+                        ambiguous = true
+                        break
+                    end
+                    arr_type = t
+                else
+                    if scalar_type !== nothing
+                        ambiguous = true
+                        break
+                    end
+                    scalar_type = t
+                end
+            end
+            if !ambiguous && arr_type !== nothing && scalar_type !== nothing
+                if arraylike(style, source)
+                    return make(style, arr_type, source)
+                else
+                    return make(style, scalar_type, source)
+                end
             end
         end
     end
