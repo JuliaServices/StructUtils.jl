@@ -1170,7 +1170,8 @@ function make!(style::StructStyle, ::Type{T}, source) where {T}
     return x
 end
 
-@doc (@doc make) make!
+"See [`make`](@ref)."
+make!
 
 """
     StructUtils.reset!(x::T)
