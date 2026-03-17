@@ -262,10 +262,13 @@ function generate_field_defaults_and_tags!(ret, T, fields)
         # This lets dependent defaults like `b = string(a)` use the parsed value of `a`.
         body2 = Expr(:block)
         for (i, f) in enumerate(fields)
+            # Add type assertion to vals[$i] when field type is known,
+            # so computed default expressions get typed inputs (trim-safe).
+            val_expr = f.type === none ? :(vals[$i]) : :(vals[$i]::$(f.type))
             if f.default !== none
-                push!(body2.args, Expr(:(=), f.name, :(isassigned(vals, $i) ? vals[$i] : $(f.default))))
+                push!(body2.args, Expr(:(=), f.name, :(isassigned(vals, $i) ? $val_expr : $(f.default))))
             else
-                push!(body2.args, Expr(:(=), f.name, :(isassigned(vals, $i) ? vals[$i] : nothing)))
+                push!(body2.args, Expr(:(=), f.name, :(isassigned(vals, $i) ? $val_expr : nothing)))
             end
         end
         defs_nt2 = Expr(:tuple, Expr(:parameters, [:(($(f.name)=$(f.name))) for f in fields_with_defaults]...))
