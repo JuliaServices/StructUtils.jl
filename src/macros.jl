@@ -256,6 +256,21 @@ function generate_field_defaults_and_tags!(ret, T, fields)
         defs_nt = Expr(:tuple, Expr(:parameters, [:(($(f.name)=$(f.name))) for f in fields_with_defaults]...))
         push!(body.args, Expr(:return, defs_nt))
         push!(ret.args, Expr(:(=), Expr(:call, GlobalRef(StructUtils, :fielddefaults), Expr(:(::), GlobalRef(StructUtils, :StructStyle)), Expr(:(::), Expr(:curly, :Type, Expr(:(<:), T)))), body))
+        # Generate 3-arg fielddefaults override that uses parsed values from `vals`.
+        # Evaluates ALL fields in order (not just those with defaults), using
+        # the parsed value from vals when assigned, else the default expression.
+        # This lets dependent defaults like `b = string(a)` use the parsed value of `a`.
+        body2 = Expr(:block)
+        for (i, f) in enumerate(fields)
+            if f.default !== none
+                push!(body2.args, Expr(:(=), f.name, :(isassigned(vals, $i) ? vals[$i] : $(f.default))))
+            else
+                push!(body2.args, Expr(:(=), f.name, :(isassigned(vals, $i) ? vals[$i] : nothing)))
+            end
+        end
+        defs_nt2 = Expr(:tuple, Expr(:parameters, [:(($(f.name)=$(f.name))) for f in fields_with_defaults]...))
+        push!(body2.args, Expr(:return, defs_nt2))
+        push!(ret.args, Expr(:(=), Expr(:call, GlobalRef(StructUtils, :fielddefaults), Expr(:(::), GlobalRef(StructUtils, :StructStyle)), Expr(:(::), Expr(:curly, :Type, Expr(:(<:), T))), :vals), body2))
     end
     # generate fieldtags override if applicable
     if any(f.tags !== none for f in fields)

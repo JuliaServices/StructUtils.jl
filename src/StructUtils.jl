@@ -147,6 +147,7 @@ using the StructUtils.jl macros: `@tags`, `@noarg`, `@defaults`, or `@kwarg`.
 function fielddefaults end
 
 fielddefaults(::StructStyle, T::Type)::NamedTuple{(),Tuple{}} = (;)
+fielddefaults(st::StructStyle, T::Type, vals) = fielddefaults(st, T)
 fielddefault(st::StructStyle, T::Type, key) = get(fielddefaults(st, T), key, nothing)
 
 "See [`fielddefaults`](@ref)."
@@ -1118,14 +1119,20 @@ function makenoarg(style, y::T, source) where {T}
 end
 
 macro _v(i)
-    esc(:(isassigned(vals, $i) ? @inbounds(vals[$i])::fieldtype(T, $i) : fielddefault(style, T, @inbounds(fsyms[$i]))::fieldtype(T, $i)))
+    esc(:(isassigned(vals, $i) ? @inbounds(vals[$i])::fieldtype(T, $i) : get(defs, @inbounds(fsyms[$i]), nothing)::fieldtype(T, $i)))
 end
 
 @generated function _construct(::Type{T}, vals, style, fsyms) where {T}
     n = fieldcount(T)
     ex = Expr(:block)
     push!(ex.args, :(Base.@_inline_meta))
-    push!(ex.args, Expr(:call, Any[:T, [:(@_v($i)) for i = 1:n]...]...))
+    # fast path: all fields assigned, skip fielddefaults entirely
+    all_assigned = Expr(:&&, [:(isassigned(vals, $i)) for i = 1:n]...)
+    fast = Expr(:call, Any[:T, [:(@inbounds(vals[$i])::fieldtype(T, $i)) for i = 1:n]...]...)
+    slow = Expr(:block,
+        :(defs = fielddefaults(style, T, vals)),
+        Expr(:call, Any[:T, [:(@_v($i)) for i = 1:n]...]...))
+    push!(ex.args, Expr(:if, all_assigned, fast, slow))
     return ex
 end
 
