@@ -6,10 +6,11 @@ const _TRIM_PRE_RELEASE = !isempty(VERSION.prerelease)
 const _JULIAC_ENTRYPOINT_EXPR = "using JuliaC; if isdefined(JuliaC, :main); JuliaC.main(ARGS); else JuliaC._main_cli(ARGS); end"
 
 # Pkg.test() sets JULIA_LOAD_PATH restrictively, which prevents subprocesses
-# from finding stdlib packages like Pkg.  Strip it so subprocesses get the
+# from finding stdlib packages like Pkg.  Remove it so subprocesses get the
 # default load path.
 function _clean_cmd(cmd::Cmd)
-    return addenv(cmd, "JULIA_LOAD_PATH" => "@:@stdlib")
+    env = Dict{String,String}(k => v for (k, v) in ENV if k != "JULIA_LOAD_PATH")
+    return setenv(cmd, env)
 end
 
 function _setup_trim_env()
