@@ -168,7 +168,7 @@ initialize(st::StructStyle, T::Type, @nospecialize(source)) =
 
 function initialize(st::StructStyle, ::Type{A}, source) where {A<:AbstractArray}
     if ndims(A) > 1
-        dims = discover_dims(st, source)
+        dims = discover_dims(st, source, ndims(A))
         return A(undef, dims)
     else
         return A(undef, 0)
@@ -679,12 +679,16 @@ end # VERSION < v"1.10"
 # "[[[1.0],[2.0]]]" => (1, 2, 1)
 # "[[[1.0,2.0]]]" => (2, 1, 1)
 # length of innermost array is 1st dim
-function discover_dims(style, x)
+function discover_dims(style, x, ndims::Int)
     @assert arraylike(style, x)
     len = applylength(x)
+    if ndims == 1
+        return (len,)
+    end
+
     ret = (
         applyeach(x) do _, v
-            return arraylike(style, v) ? EarlyReturn(discover_dims(style, v)) : EarlyReturn(())
+            return arraylike(style, v) ? EarlyReturn(discover_dims(style, v, ndims - 1)) : EarlyReturn(())
         end
     )::EarlyReturn
     return (ret.value..., len)
@@ -694,11 +698,11 @@ end
     StructUtils.discover_dims(style, ::Type{T}, source) -> Tuple
 
 Discover the dimensions for a fixed-size array type `T`. By default,
-delegates to `discover_dims(style, source)` to scan the source object.
+delegates to `discover_dims(style, source, ndims(T))` to scan the source object.
 Override for types where dimensions are encoded in the type itself
 (e.g. `StaticArrays.StaticArray`), avoiding the need to scan the source.
 """
-discover_dims(style, ::Type{T}, source) where {T} = discover_dims(style, source)
+discover_dims(style, ::Type{T}, source) where {T} = discover_dims(style, source, ndims(T))
 
 """
     StructUtils.arrayfromdata(::Type{T}, mem, dims::Tuple) -> T
@@ -725,7 +729,7 @@ end
 
 function (f::MultiDimClosure{S,A})(i::Int, val) where {S,A}
     f.dims[f.cur_dim[]] = i
-    if arraylike(f.style, val)
+    if arraylike(f.style, val) && f.cur_dim[] > 1
         f.cur_dim[] -= 1
         st = applyeach(f, f.style, val)
         f.cur_dim[] += 1
