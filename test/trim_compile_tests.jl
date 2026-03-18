@@ -13,6 +13,11 @@ function _clean_cmd(cmd::Cmd)
     return setenv(cmd, env)
 end
 
+function _trim_use_bundle()::Bool
+    default = Sys.iswindows() ? "1" : "0"
+    return get(ENV, "STRUCTUTILS_TRIM_BUNDLE", default) == "1"
+end
+
 function _setup_trim_env()
     # JuliaC requires Julia 1.12+ and can't be in [extras] without breaking
     # Pkg.test() on older Julia versions.  Create a temp project that dev's
@@ -42,9 +47,13 @@ function _setup_trim_env()
     return env_path
 end
 
-function _run_trim_compile(project_path::String, script_path::String, output_name::String; timeout_s::Float64 = 120.0)
+function _run_trim_compile(project_path::String, script_path::String, output_name::String; timeout_s::Float64 = 120.0, bundle_dir::Union{Nothing, String} = nothing)
     julia_exe = joinpath(Sys.BINDIR, Base.julia_exename())
-    cmd = _clean_cmd(`$julia_exe --startup-file=no --history-file=no --code-coverage=none --project=$project_path -e $(_JULIAC_ENTRYPOINT_EXPR) -- --output-exe $output_name --project=$project_path --experimental --trim=safe $script_path`)
+    cmd = if bundle_dir === nothing
+        _clean_cmd(`$julia_exe --startup-file=no --history-file=no --code-coverage=none --project=$project_path -e $(_JULIAC_ENTRYPOINT_EXPR) -- --output-exe $output_name --project=$project_path --experimental --trim=safe $script_path`)
+    else
+        _clean_cmd(`$julia_exe --startup-file=no --history-file=no --code-coverage=none --project=$project_path -e $(_JULIAC_ENTRYPOINT_EXPR) -- --output-exe $output_name --bundle $bundle_dir --project=$project_path --experimental --trim=safe $script_path`)
+    end
     return _run_command_with_timeout(cmd; timeout_s = timeout_s, log_label = "compile")
 end
 
@@ -111,7 +120,8 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
     start_t = time()
     mktempdir() do tmpdir
         cd(tmpdir) do
-            exit_code, output, timed_out = _run_trim_compile(project_path, script_path, output_name)
+            bundle_dir = _trim_use_bundle() ? joinpath(tmpdir, "bundle") : nothing
+            exit_code, output, timed_out = _run_trim_compile(project_path, script_path, output_name; bundle_dir = bundle_dir)
             if timed_out
                 println("[trim] compile TIMED OUT for $(script_file)")
                 println(output)
@@ -133,10 +143,11 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
             @test trim_warnings >= 0
             output_path = Sys.iswindows() ? "$(output_name).exe" : output_name
             if trim_errors == 0
+                run_path = bundle_dir === nothing ? output_path : joinpath(bundle_dir, "bin", output_path)
                 @test exit_code == 0
-                @test isfile(output_path)
+                @test isfile(run_path)
                 run_timeout_s = _trim_executable_timeout_s()
-                run_cmd = `$(abspath(output_path))`
+                run_cmd = `$(abspath(run_path))`
                 run_exit, run_output, run_timed_out = _run_command_with_timeout(run_cmd; timeout_s = run_timeout_s, log_label = "run")
                 if run_timed_out
                     println("[trim] executable TIMED OUT for $(script_file)")
@@ -164,9 +175,6 @@ end
         @test true
     elseif _TRIM_PRE_RELEASE
         println("[trim] skip prerelease Julia: trim verifier behavior is not stable yet")
-        @test true
-    elseif Sys.iswindows()
-        println("[trim] skip Windows: JuliaC-compiled binaries hang on Windows CI")
         @test true
     else
         project_path = _setup_trim_env()
