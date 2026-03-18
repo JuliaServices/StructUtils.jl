@@ -165,6 +165,9 @@ end
     elseif _TRIM_PRE_RELEASE
         println("[trim] skip prerelease Julia: trim verifier behavior is not stable yet")
         @test true
+    elseif Sys.iswindows()
+        println("[trim] skip Windows: JuliaC-compiled binaries hang on Windows CI")
+        @test true
     else
         project_path = _setup_trim_env()
         trim_workloads = [
