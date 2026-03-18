@@ -364,4 +364,76 @@ end
         @test x.b == 1
     end
 
+    @testset "computedefaults with parsed values" begin
+        # Dependent default where first field has no default (the JSON.jl #430 case)
+        @defaults struct ComputedA
+            a::Int
+            b::String = string(a)
+        end
+        # Direct construction still works
+        @test ComputedA(42) == ComputedA(42, "42")
+        # Deserialization: b computed from parsed a
+        r = StructUtils.make(ComputedA, Dict(:a => 42))
+        @test r.a == 42
+        @test r.b == "42"
+        # Both fields provided: b uses provided value, not computed
+        r2 = StructUtils.make(ComputedA, Dict(:a => 42, :b => "hello"))
+        @test r2.a == 42
+        @test r2.b == "hello"
+
+        # Dependent default where first field also has a default
+        @defaults struct ComputedB
+            a::Int = 0
+            b::String = string(a)
+        end
+        # No fields provided: b computed from a's default
+        r3 = StructUtils.make(ComputedB, Dict{Symbol,Any}())
+        @test r3.a == 0
+        @test r3.b == "0"
+        # Only a provided: b computed from parsed a
+        r4 = StructUtils.make(ComputedB, Dict(:a => 7))
+        @test r4.a == 7
+        @test r4.b == "7"
+
+        # @kwarg with dependent defaults and deserialization
+        @kwarg struct ComputedC
+            a::Int = 1
+            b::Int = a + 10
+            c::Int = a + b
+        end
+        # All defaults
+        r5 = StructUtils.make(ComputedC, Dict{Symbol,Any}())
+        @test r5.a == 1
+        @test r5.b == 11
+        @test r5.c == 12
+        # Override a, b and c recompute
+        r6 = StructUtils.make(ComputedC, Dict(:a => 5))
+        @test r6.a == 5
+        @test r6.b == 15
+        @test r6.c == 20
+        # Override a and b, c recomputes from parsed values
+        r7 = StructUtils.make(ComputedC, Dict(:a => 5, :b => 100))
+        @test r7.a == 5
+        @test r7.b == 100
+        @test r7.c == 105
+
+        # Non-macro struct: computedefaults falls back to fielddefaults
+        struct ComputedPlain
+            x::Int
+            y::Int
+        end
+        r8 = StructUtils.make(ComputedPlain, Dict(:x => 1, :y => 2))
+        @test r8.x == 1
+        @test r8.y == 2
+
+        # Expression-based default (not just field reference)
+        @defaults struct ComputedD
+            x::Int
+            y::Int
+            label::String = "$(x)-$(y)"
+        end
+        r9 = StructUtils.make(ComputedD, Dict(:x => 3, :y => 4))
+        @test r9.label == "3-4"
+    end
+
 end # @testset "macros"
