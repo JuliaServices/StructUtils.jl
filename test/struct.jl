@@ -86,6 +86,18 @@ struct Wrapper
     x::NamedTuple{(:a, :b), Tuple{Int, String}}
 end
 
+struct AbstractDictHolder
+    d::AbstractDict
+end
+
+struct AbstractArrayHolder
+    a::AbstractArray
+end
+
+struct AbstractVectorHolder
+    v::AbstractVector
+end
+
 mutable struct UndefGuy
     id::Int
     name::String
