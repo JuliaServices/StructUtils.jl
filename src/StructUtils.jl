@@ -794,6 +794,8 @@ else
     const _delete = delete
 end
 
+# Abstract collection targets are not constructible, so when the incoming value
+# already satisfies the abstract type we must preserve it instead of rebuilding.
 @inline abstractcollectionpassthrough(style::StructStyle, ::Type{T}, source) where {T} =
     isabstracttype(T) && source isa T && (dictlike(style, T) || arraylike(style, T))
 
