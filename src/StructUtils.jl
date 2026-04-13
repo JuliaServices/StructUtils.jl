@@ -794,6 +794,9 @@ else
     const _delete = delete
 end
 
+@inline abstractcollectionpassthrough(style::StructStyle, ::Type{T}, source) where {T} =
+    isabstracttype(T) && source isa T && (dictlike(style, T) || arraylike(style, T))
+
 function make(style::StructStyle, T::Type, source, tags)
     if haskey(tags, :choosetype)
         return make(style, tags.choosetype(source), source, _delete(tags, :choosetype))
@@ -853,6 +856,9 @@ function make(style::StructStyle, T::Type, source, tags)
 end
 
 function make(style::StructStyle, T::Type, source)
+    if abstractcollectionpassthrough(style, T, source)
+        return source, defaultstate(style)
+    end
     # start with some hard-coded Union cases
     if T !== Any
         if T >: Missing && T !== Missing
@@ -1165,6 +1171,9 @@ function make!(style::StructStyle, x::T, source) where {T}
 end
 
 function make!(style::StructStyle, ::Type{T}, source) where {T}
+    if abstractcollectionpassthrough(style, T, source)
+        return source
+    end
     x = initialize(style, T, source)
     make!(style, x, source)
     return x

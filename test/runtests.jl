@@ -22,6 +22,7 @@ t = (1, 2, 3, 4)
 
 println("Dict{Symbol, Int}")
 @test StructUtils.make(Dict{Symbol, Int}, d) == d
+@test StructUtils.make(Dict{Symbol, Int}, d) !== d
 @test StructUtils.make(Dict{Symbol, Int}, ds) == d
 @test StructUtils.make(Dict{Symbol, Int}, nt) == d
 @test StructUtils.make(Dict{Symbol, Int}, a) == d
@@ -107,8 +108,27 @@ println("Vector")
 @test StructUtils.make(typeof(v), a) == v
 @test StructUtils.make(typeof(v), vp) == v
 @test StructUtils.make(typeof(v), v) == v
+@test StructUtils.make(typeof(v), v) !== v
 @test StructUtils.make(typeof(v), t) == v
 # @test StructUtils.make(typeof(v), aa) == v # fails because of extra field
+
+println("Abstract collections")
+ad = Dict("a" => 1)
+av = [1, 2, 3]
+
+@test StructUtils.make(AbstractDict, ad) === ad
+@test StructUtils.make(AbstractArray, av) === av
+@test StructUtils.make(AbstractVector, av) === av
+@test StructUtils.make!(AbstractDict, ad) === ad
+@test StructUtils.make!(AbstractArray, av) === av
+@test StructUtils.make!(AbstractVector, av) === av
+
+x = StructUtils.make(AbstractDictHolder, Dict("d" => ad))
+@test x.d === ad
+x = StructUtils.make(AbstractArrayHolder, Dict("a" => av))
+@test x.a === av
+x = StructUtils.make(AbstractVectorHolder, Dict("v" => av))
+@test x.v === av
 
 println("Tuple")
 # @test StructUtils.make(typeof(t), d) == t # relies on order of Dict elements
