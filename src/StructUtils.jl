@@ -218,7 +218,8 @@ arraylike(::Type{<:AbstractSet}) = true
 arraylike(::Type{<:Tuple}) = true
 arraylike(::Type{<:Base.Generator}) = true
 arraylike(::Type{<:Core.SimpleVector}) = true
-arraylike(@nospecialize(T)) = false
+arraylike(@nospecialize(::Type)) = false
+arraylike(@nospecialize(x)) = arraylike(typeof(x))
 
 """
     StructUtils.fixedsizearray(::Type{T}) -> Bool

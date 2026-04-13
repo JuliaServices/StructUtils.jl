@@ -226,6 +226,13 @@ StructUtils.reset!(p)
 println("Q")
 @test StructUtils.make(Q, (id=0, value="application/json")) == Q(0, MIME("application/json"))
 
+@testset "arraylike public API" begin
+    @test StructUtils.arraylike([1]) == true
+    @test StructUtils.arraylike((1, 2)) == true
+    @test StructUtils.arraylike(Set([1])) == true
+    @test StructUtils.arraylike(1) == false
+end
+
 @testset "applyeach with Pair" begin
     # Basic functionality - collect key-value pairs
     collected = []
