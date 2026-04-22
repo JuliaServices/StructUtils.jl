@@ -1,6 +1,14 @@
 using Test, Dates, UUIDs, StructUtils
 
 struct TestStyle <: StructUtils.StructStyle end
+struct StrictUnknownFieldStyle <: StructUtils.StructStyle end
+struct UnknownFieldTestError <: Exception
+    target::Any
+    key::Any
+end
+
+StructUtils.unknownfield(::StrictUnknownFieldStyle, ::Type{T}, key, value) where {T} =
+    throw(UnknownFieldTestError(T, key))
 
 include(joinpath(dirname(pathof(StructUtils)), "../test/macros.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/struct.jl"))
@@ -139,6 +147,18 @@ println("Tuple")
 @test StructUtils.make(typeof(t), v) == t
 @test StructUtils.make(typeof(t), t) == t
 @test StructUtils.make(typeof(t), aa) == t
+
+@testset "unknownfield hook" begin
+    @test StructUtils.make(A, nt, StrictUnknownFieldStyle()) == a
+    @test_throws UnknownFieldTestError StructUtils.make(A, (a=1, b=2, c=3, d=4, e=5), StrictUnknownFieldStyle())
+    @test_throws UnknownFieldTestError StructUtils.make(typeof(nt), aa, StrictUnknownFieldStyle())
+    @test_throws UnknownFieldTestError StructUtils.make(typeof(t), [1, 2, 3, 4, 5], StrictUnknownFieldStyle())
+
+    pmut2 = P()
+    StructUtils.make!(pmut2, (id=0, name="Jane"); style=StrictUnknownFieldStyle())
+    @test pmut2.id == 0 && pmut2.name == "Jane"
+    @test_throws UnknownFieldTestError StructUtils.make!(pmut2, (id=0, name="Joan", rate=3.14); style=StrictUnknownFieldStyle())
+end
 
 println("C")
 @test StructUtils.make(C, ()) == C()

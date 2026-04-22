@@ -116,6 +116,22 @@ returns `nothing`.
 defaultstate(::StructStyle) = nothing
 
 """
+    StructUtils.unknownfield(::StructStyle, ::Type{T}, key, value)
+
+Called from [`StructUtils.make`](@ref) and [`StructUtils.make!`](@ref) when a
+source key or index does not match any field or positional slot in the target
+type `T`.
+
+The default implementation ignores the extra input by returning
+[`StructUtils.defaultstate`](@ref). Custom struct styles can overload this to
+throw, return [`StructUtils.EarlyReturn`](@ref), or otherwise customize the
+behavior for unknown fields.
+"""
+function unknownfield end
+
+unknownfield(st::StructStyle, ::Type{T}, key, value) where {T} = defaultstate(st)
+
+"""
     StructUtils.fieldtags(::StructStyle, ::Type{T}) -> NamedTuple
     StructUtils.fieldtags(::StructStyle, ::Type{T}, fieldname) -> NamedTuple
 
@@ -501,6 +517,10 @@ end
 ```
 """
 struct EarlyReturn{T}
+    value::T
+end
+
+struct _MatchedState{T}
     value::T
 end
 
@@ -955,7 +975,7 @@ function (f::TupleClosure{T,A,S})(k, v) where {T,A,S}
             if k == i
                 intval, intst = make(f.style, fieldtype(T, i), v)
                 @inbounds f.vals[i] = intval
-                return EarlyReturn(intst)
+                return EarlyReturn(_MatchedState(intst))
             end
         else
             j = unsafe_load(f.i)
@@ -963,11 +983,11 @@ function (f::TupleClosure{T,A,S})(k, v) where {T,A,S}
                 unsafe_store!(f.i, i + 1)
                 elseval, elsest = make(f.style, fieldtype(T, i), v)
                 @inbounds f.vals[i] = elseval
-                return EarlyReturn(elsest)
+                return EarlyReturn(_MatchedState(elsest))
             end
         end
     end
-    return st === nothing ? defaultstate(f.style) : st
+    return st isa _MatchedState ? st.value : unknownfield(f.style, T, k, v)
 end
 
 function maketuple(style, ::Type{T}, source) where {T}
@@ -1092,14 +1112,14 @@ function findfield(::Type{T}, k, v, f) where {T}
             if keyeq(k, field) || keyeq(k, fn)
                 symval, symst = make(f.style, fieldtype(T, i), v, ftags)
                 setval!(f.vals, symval, i)
-                return EarlyReturn(symst)
+                return EarlyReturn(_MatchedState(symst))
             end
         elseif typeof(k) == Int
             if k == i
                 ftags = fieldtags(f.style, T, f.fsyms[i])
                 intval, intst = make(f.style, fieldtype(T, i), v, ftags)
                 setval!(f.vals, intval, i)
-                return EarlyReturn(intst)
+                return EarlyReturn(_MatchedState(intst))
             end
         else
             fn = f.fsyms[i]
@@ -1109,11 +1129,11 @@ function findfield(::Type{T}, k, v, f) where {T}
             if keyeq(k, field)
                 strval, strst = make(f.style, fieldtype(T, i), v, ftags)
                 setval!(f.vals, strval, i)
-                return EarlyReturn(strst)
+                return EarlyReturn(_MatchedState(strst))
             end
         end
     end
-    return st === nothing ? defaultstate(f.style) : st
+    return st isa _MatchedState ? st.value : unknownfield(f.style, T, k, v)
 end
 
 (f::StructClosure{T,A,S,FS,FSS})(k, v) where {T,A,S,FS,FSS} = findfield(T, k, v, f)
