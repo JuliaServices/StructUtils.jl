@@ -519,6 +519,10 @@ struct EarlyReturn{T}
     value::T
 end
 
+struct _MatchedState{T}
+    value::T
+end
+
 applyeach(f, x) = applyeach(DefaultStyle(), f, x)
 applyeach(f, st::StructStyle, x) = applyeach(st, f, x)
 
@@ -970,7 +974,7 @@ function (f::TupleClosure{T,A,S})(k, v) where {T,A,S}
             if k == i
                 intval, intst = make(f.style, fieldtype(T, i), v)
                 @inbounds f.vals[i] = intval
-                return EarlyReturn(Some(intst))
+                return EarlyReturn(_MatchedState(intst))
             end
         else
             j = unsafe_load(f.i)
@@ -978,11 +982,11 @@ function (f::TupleClosure{T,A,S})(k, v) where {T,A,S}
                 unsafe_store!(f.i, i + 1)
                 elseval, elsest = make(f.style, fieldtype(T, i), v)
                 @inbounds f.vals[i] = elseval
-                return EarlyReturn(Some(elsest))
+                return EarlyReturn(_MatchedState(elsest))
             end
         end
     end
-    return st isa Some ? something(st) : unknownfield(f.style, T, k, v)
+    return st isa _MatchedState ? st.value : unknownfield(f.style, T, k, v)
 end
 
 function maketuple(style, ::Type{T}, source) where {T}
@@ -1107,14 +1111,14 @@ function findfield(::Type{T}, k, v, f) where {T}
             if keyeq(k, field) || keyeq(k, fn)
                 symval, symst = make(f.style, fieldtype(T, i), v, ftags)
                 setval!(f.vals, symval, i)
-                return EarlyReturn(Some(symst))
+                return EarlyReturn(_MatchedState(symst))
             end
         elseif typeof(k) == Int
             if k == i
                 ftags = fieldtags(f.style, T, f.fsyms[i])
                 intval, intst = make(f.style, fieldtype(T, i), v, ftags)
                 setval!(f.vals, intval, i)
-                return EarlyReturn(Some(intst))
+                return EarlyReturn(_MatchedState(intst))
             end
         else
             fn = f.fsyms[i]
@@ -1124,11 +1128,11 @@ function findfield(::Type{T}, k, v, f) where {T}
             if keyeq(k, field)
                 strval, strst = make(f.style, fieldtype(T, i), v, ftags)
                 setval!(f.vals, strval, i)
-                return EarlyReturn(Some(strst))
+                return EarlyReturn(_MatchedState(strst))
             end
         end
     end
-    return st isa Some ? something(st) : unknownfield(f.style, T, k, v)
+    return st isa _MatchedState ? st.value : unknownfield(f.style, T, k, v)
 end
 
 (f::StructClosure{T,A,S,FS,FSS})(k, v) where {T,A,S,FS,FSS} = findfield(T, k, v, f)
