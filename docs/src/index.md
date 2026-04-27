@@ -447,7 +447,7 @@ StructUtils.@choosetype AbstractMonster x ->
     Dracula : Werewolf
 
 # Custom numeric type with special parsing
-struct Percent <: Number
+@nonstruct struct Percent <: Number
     value::Float64
 end
 
