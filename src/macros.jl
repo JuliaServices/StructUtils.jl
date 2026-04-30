@@ -121,12 +121,17 @@ function parse_struct_def(kind, src, mod, expr)
     if Meta.isexpr(T, :<:)
         T = T.args[1]
     end
+    typeparam_names = Symbol[]
+    typeparams = Any[]
     if Meta.isexpr(T, :curly)
         T_with_typeparams = copy(T)
         # sanitize T_with_typeparams to remove any type param bounds
         for i = 2:length(T_with_typeparams.args)
             if T_with_typeparams.args[i] isa Expr
                 T_with_typeparams.args[i] = T_with_typeparams.args[i].args[1]
+            end
+            if T_with_typeparams.args[i] isa Symbol
+                push!(typeparam_names, T_with_typeparams.args[i])
             end
         end
         typeparams = T.args[2:end]
@@ -164,7 +169,7 @@ function parse_struct_def(kind, src, mod, expr)
         # that call convert to the field type for each field?
         # override StructUtils.noarg(::Type{nm}) = true and add outside struct definition
         push!(ret.args, Expr(:(=), Expr(:call, GlobalRef(StructUtils, :noarg), Expr(:(::), GlobalRef(StructUtils, :StructStyle)), Expr(:(::), Expr(:curly, :Type, Expr(:(<:), T)))), true))
-        generate_field_defaults_and_tags!(ret, T, fields)
+        generate_field_defaults_and_tags!(ret, T, fields, typeparam_names, typeparams)
     elseif kind == :kwarg
         if !isempty(fields)
             # generate outer kwarg constructor, like: Foo(; a=1, b=2, ...) = Foo(a, b, ...)
@@ -181,11 +186,11 @@ function parse_struct_def(kind, src, mod, expr)
         end
         # override StructUtils.kwarg(::Type{T}) = true and add outside struct definition
         push!(ret.args, Expr(:(=), Expr(:call, GlobalRef(StructUtils, :kwarg), Expr(:(::), GlobalRef(StructUtils, :StructStyle)), Expr(:(::), Expr(:curly, :Type, Expr(:(<:), T)))), true))
-        generate_field_defaults_and_tags!(ret, T, fields)
+        generate_field_defaults_and_tags!(ret, T, fields, typeparam_names, typeparams)
     elseif kind == :nonstruct
         # Override StructUtils.structlike to return false and add outside struct definition
         push!(ret.args, Expr(:(=), Expr(:call, GlobalRef(StructUtils, :structlike), Expr(:(::), GlobalRef(StructUtils, :StructStyle)), Expr(:(::), Expr(:curly, :Type, Expr(:(<:), T)))), false))
-        generate_field_defaults_and_tags!(ret, T, fields)
+        generate_field_defaults_and_tags!(ret, T, fields, typeparam_names, typeparams)
     else
         # if any default are specified, ensure all trailing fields have defaults
         # then generate multiple outer constructors allowing partial specification
@@ -233,47 +238,102 @@ function parse_struct_def(kind, src, mod, expr)
                 end
             end
         end
-        generate_field_defaults_and_tags!(ret, T, fields)
+        generate_field_defaults_and_tags!(ret, T, fields, typeparam_names, typeparams)
     end
     # Return the struct type for REPL friendliness (like Base.@kwdef)
     push!(ret.args, T)
     return esc(ret)
 end
 
-function generate_field_defaults_and_tags!(ret, T, fields)
+_references_typeparam(_, ::Vector{Symbol}) = false
+_references_typeparam(s::Symbol, names::Vector{Symbol}) = s in names
+_references_typeparam(ex::Expr, names::Vector{Symbol}) =
+    any(arg -> _references_typeparam(arg, names), ex.args)
+
+# Build the body of the 2-arg fielddefaults: evaluate default expressions in
+# order (so later ones can reference earlier ones), then return a NamedTuple.
+function _fielddefaults_body_2arg(fields_with_defaults)
+    body = Expr(:block)
+    for f in fields_with_defaults
+        push!(body.args, Expr(:(=), f.name, f.default))
+    end
+    defs_nt = Expr(:tuple, Expr(:parameters, [:(($(f.name)=$(f.name))) for f in fields_with_defaults]...))
+    push!(body.args, Expr(:return, defs_nt))
+    return body
+end
+
+# Build the body of the 3-arg fielddefaults: evaluate ALL fields in order,
+# preferring `vals[i]` when assigned. Type assertions on `vals[i]` are emitted
+# when a field's type is known (for trim safety on computed defaults), but
+# skipped when the type references a struct type parameter that isn't bound
+# by the method's signature (the unparameterized method).
+function _fielddefaults_body_3arg(fields, fields_with_defaults, typeparam_names::Vector{Symbol})
+    body = Expr(:block)
+    for (i, f) in enumerate(fields)
+        skip_assert = f.type === none || _references_typeparam(f.type, typeparam_names)
+        val_expr = skip_assert ? :(vals[$i]) : :(vals[$i]::$(f.type))
+        if f.default !== none
+            push!(body.args, Expr(:(=), f.name, :(isassigned(vals, $i) ? $val_expr : $(f.default))))
+        else
+            push!(body.args, Expr(:(=), f.name, :(isassigned(vals, $i) ? $val_expr : nothing)))
+        end
+    end
+    defs_nt = Expr(:tuple, Expr(:parameters, [:(($(f.name)=$(f.name))) for f in fields_with_defaults]...))
+    push!(body.args, Expr(:return, defs_nt))
+    return body
+end
+
+function generate_field_defaults_and_tags!(ret, T, fields, typeparam_names::Vector{Symbol}=Symbol[], typeparams::Vector=Any[])
     # generate fielddefaults override if applicable
     if any(f.default !== none for f in fields)
-        # Build a function body that evaluates default expressions in order,
-        # then returns a named tuple with the evaluated values.
-        # This allows defaults to reference earlier fields (e.g., b = a).
-        body = Expr(:block)
         fields_with_defaults = [f for f in fields if f.default !== none]
-        # First, evaluate each default expression in order
-        for f in fields_with_defaults
-            push!(body.args, Expr(:(=), f.name, f.default))
+        # 2-arg unparameterized: fielddefaults(::StructStyle, ::Type{<:T})
+        body_2 = _fielddefaults_body_2arg(fields_with_defaults)
+        push!(ret.args, Expr(:(=),
+            Expr(:call, GlobalRef(StructUtils, :fielddefaults),
+                Expr(:(::), GlobalRef(StructUtils, :StructStyle)),
+                Expr(:(::), Expr(:curly, :Type, Expr(:(<:), T)))),
+            body_2))
+        # 3-arg unparameterized: fielddefaults(::StructStyle, ::Type{<:T}, vals).
+        # Skip type assertions whose field type references a struct type parameter,
+        # since this signature does not bind the parameters.
+        body_3 = _fielddefaults_body_3arg(fields, fields_with_defaults, typeparam_names)
+        push!(ret.args, Expr(:(=),
+            Expr(:call, GlobalRef(StructUtils, :fielddefaults),
+                Expr(:(::), GlobalRef(StructUtils, :StructStyle)),
+                Expr(:(::), Expr(:curly, :Type, Expr(:(<:), T))),
+                :vals),
+            body_3))
+        # For parametric structs, also emit parameterized methods that bind the
+        # type parameters in scope. They are more specific than the
+        # unparameterized methods, so dispatch picks them for concrete calls
+        # like fielddefaults(style, Foo{2}); the unparameterized methods remain
+        # as the fallback for UnionAll calls (e.g., fielddefaults(style, Foo)).
+        # This makes default expressions like `a = ntuple(_->0, N)` and type
+        # assertions like `vals[i]::NTuple{N, Symbol}` work for concrete types.
+        if !isempty(typeparam_names)
+            T_curly = Expr(:curly, T, typeparam_names...)
+            body_2p = _fielddefaults_body_2arg(fields_with_defaults)
+            push!(ret.args, Expr(:(=),
+                Expr(:where,
+                    Expr(:call, GlobalRef(StructUtils, :fielddefaults),
+                        Expr(:(::), GlobalRef(StructUtils, :StructStyle)),
+                        Expr(:(::), Expr(:curly, :Type, Expr(:(<:), T_curly)))),
+                    typeparams...),
+                body_2p))
+            # In the parameterized 3-arg method, type parameters are bound, so we
+            # don't need to skip type assertions referencing them; pass an empty
+            # typeparam_names vector to retain assertions for trim safety.
+            body_3p = _fielddefaults_body_3arg(fields, fields_with_defaults, Symbol[])
+            push!(ret.args, Expr(:(=),
+                Expr(:where,
+                    Expr(:call, GlobalRef(StructUtils, :fielddefaults),
+                        Expr(:(::), GlobalRef(StructUtils, :StructStyle)),
+                        Expr(:(::), Expr(:curly, :Type, Expr(:(<:), T_curly))),
+                        :vals),
+                    typeparams...),
+                body_3p))
         end
-        # Then return a named tuple with the evaluated values
-        defs_nt = Expr(:tuple, Expr(:parameters, [:(($(f.name)=$(f.name))) for f in fields_with_defaults]...))
-        push!(body.args, Expr(:return, defs_nt))
-        push!(ret.args, Expr(:(=), Expr(:call, GlobalRef(StructUtils, :fielddefaults), Expr(:(::), GlobalRef(StructUtils, :StructStyle)), Expr(:(::), Expr(:curly, :Type, Expr(:(<:), T)))), body))
-        # Generate 3-arg fielddefaults override that uses parsed values from `vals`.
-        # Evaluates ALL fields in order (not just those with defaults), using
-        # the parsed value from vals when assigned, else the default expression.
-        # This lets dependent defaults like `b = string(a)` use the parsed value of `a`.
-        body2 = Expr(:block)
-        for (i, f) in enumerate(fields)
-            # Add type assertion to vals[$i] when field type is known,
-            # so computed default expressions get typed inputs (trim-safe).
-            val_expr = f.type === none ? :(vals[$i]) : :(vals[$i]::$(f.type))
-            if f.default !== none
-                push!(body2.args, Expr(:(=), f.name, :(isassigned(vals, $i) ? $val_expr : $(f.default))))
-            else
-                push!(body2.args, Expr(:(=), f.name, :(isassigned(vals, $i) ? $val_expr : nothing)))
-            end
-        end
-        defs_nt2 = Expr(:tuple, Expr(:parameters, [:(($(f.name)=$(f.name))) for f in fields_with_defaults]...))
-        push!(body2.args, Expr(:return, defs_nt2))
-        push!(ret.args, Expr(:(=), Expr(:call, GlobalRef(StructUtils, :fielddefaults), Expr(:(::), GlobalRef(StructUtils, :StructStyle)), Expr(:(::), Expr(:curly, :Type, Expr(:(<:), T))), :vals), body2))
     end
     # generate fieldtags override if applicable
     if any(f.tags !== none for f in fields)
