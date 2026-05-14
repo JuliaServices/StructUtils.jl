@@ -10,6 +10,37 @@ end
 StructUtils.unknownfield(::StrictUnknownFieldStyle, ::Type{T}, key, value) where {T} =
     throw(UnknownFieldTestError(T, key))
 
+mutable struct CountingTagStyle <: StructUtils.StructStyle
+    calls::Int
+end
+
+struct CountingTagged
+    a::Int
+    b::Int
+    c::Int
+end
+
+function StructUtils.fieldtags(st::CountingTagStyle, ::Type{CountingTagged})
+    st.calls += 1
+    return (a=(name="a",), b=(name="b",), c=(name="c",))
+end
+
+mutable struct PerFieldTagStyle <: StructUtils.StructStyle
+    calls::Int
+end
+
+struct PerFieldTagged
+    x::Int
+    y::Int
+end
+
+function StructUtils.fieldtags(st::PerFieldTagStyle, ::Type{PerFieldTagged}, field)
+    st.calls += 1
+    field === :x && return (name="a",)
+    field === :y && return (name="b",)
+    return (;)
+end
+
 include(joinpath(dirname(pathof(StructUtils)), "../test/macros.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/struct.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/selectors.jl"))
@@ -158,6 +189,16 @@ println("Tuple")
     StructUtils.make!(pmut2, (id=0, name="Jane"); style=StrictUnknownFieldStyle())
     @test pmut2.id == 0 && pmut2.name == "Jane"
     @test_throws UnknownFieldTestError StructUtils.make!(pmut2, (id=0, name="Joan", rate=3.14); style=StrictUnknownFieldStyle())
+end
+
+@testset "target fieldtags are cached during make" begin
+    style = CountingTagStyle(0)
+    @test StructUtils.make(CountingTagged, (a=1, b=2, c=3), style) == CountingTagged(1, 2, 3)
+    @test style.calls == 1
+
+    perfield = PerFieldTagStyle(0)
+    @test StructUtils.make(PerFieldTagged, (a=10, b=20), perfield) == PerFieldTagged(10, 20)
+    @test perfield.calls == 2
 end
 
 println("C")
