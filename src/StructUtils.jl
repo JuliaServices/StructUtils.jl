@@ -145,11 +145,37 @@ function fieldtags end
 fieldtags(::StructStyle, T::Type)::NamedTuple{(),Tuple{}} = (;)
 
 function fieldtags(st::StructStyle, T::Type, field)
-    ft = fieldtags(st, T)
+    return _fieldtag(st, fieldtags(st, T), field)
+end
+
+function _fieldtag(st::StructStyle, ft, field)
     isempty(ft) && return (;)
-    fft = get(() -> (;), ft, field)
+    fft = get(ft, field, (;))
     ftk = fieldtagkey(st)
     return ftk === nothing ? fft : get(fft, ftk, fft)
+end
+
+@generated function _fieldtagtuple(st::StructStyle, ::Type{T}, fsyms) where {T}
+    n = fieldcount(T)
+    vals = [:(_fieldtag(st, ft, $(QuoteNode(fieldname(T, i))))) for i = 1:n]
+    return quote
+        Base.@_inline_meta
+        ft = fieldtags(st, T)
+        if isempty(ft)
+            return _fieldtagtuple_public(st, T, fsyms)
+        else
+            return ($(vals...),)
+        end
+    end
+end
+
+@generated function _fieldtagtuple_public(st::StructStyle, ::Type{T}, fsyms) where {T}
+    n = fieldcount(T)
+    vals = [:(fieldtags(st, T, $(QuoteNode(fieldname(T, i))))) for i = 1:n]
+    return quote
+        Base.@_inline_meta
+        return ($(vals...),)
+    end
 end
 
 """
@@ -1086,14 +1112,19 @@ end
     :($(Tuple(fieldname(T, i) for i in 1:fieldcount(T))))
 end
 
-struct StructClosure{T,A,S,FS,FSS}
+struct StructClosure{T,A,S,FS,FSS,FT}
     vals::A # Memory{Any} for structs, T for mutable structs
     style::S
     fsyms::FS
     fstrs::FSS
+    ftags::FT
 end
 
-StructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FSS} = StructClosure{T,A,S,FS,FSS}(vals, style, fsyms, fstrs)
+StructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FSS} =
+    StructClosure{T}(vals, style, fsyms, fstrs, _fieldtagtuple(style, T, fsyms))
+
+StructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS, ftags::FT) where {T,A,S,FS,FSS,FT} =
+    StructClosure{T,A,S,FS,FSS,FT}(vals, style, fsyms, fstrs, ftags)
 
 if VERSION < v"1.11"
     setval!(vals::Vector{Any}, x, i) = @inbounds vals[i] = x
@@ -1107,7 +1138,7 @@ function findfield(::Type{T}, k, v, f) where {T}
     st = _foreach(T) do i
         if typeof(k) == Symbol
             fn = f.fsyms[i]
-            ftags = fieldtags(f.style, T, fn)
+            ftags = f.ftags[i]
             field = get(ftags, :name, fn)
             if keyeq(k, field) || keyeq(k, fn)
                 symval, symst = make(f.style, fieldtype(T, i), v, ftags)
@@ -1116,7 +1147,7 @@ function findfield(::Type{T}, k, v, f) where {T}
             end
         elseif typeof(k) == Int
             if k == i
-                ftags = fieldtags(f.style, T, f.fsyms[i])
+                ftags = f.ftags[i]
                 intval, intst = make(f.style, fieldtype(T, i), v, ftags)
                 setval!(f.vals, intval, i)
                 return EarlyReturn(_MatchedState(intst))
@@ -1124,7 +1155,7 @@ function findfield(::Type{T}, k, v, f) where {T}
         else
             fn = f.fsyms[i]
             fstr = f.fstrs[i]
-            ftags = fieldtags(f.style, T, fn)
+            ftags = f.ftags[i]
             field = get(ftags, :name, fstr)
             if keyeq(k, field)
                 strval, strst = make(f.style, fieldtype(T, i), v, ftags)
@@ -1136,7 +1167,7 @@ function findfield(::Type{T}, k, v, f) where {T}
     return st isa _MatchedState ? st.value : unknownfield(f.style, T, k, v)
 end
 
-(f::StructClosure{T,A,S,FS,FSS})(k, v) where {T,A,S,FS,FSS} = findfield(T, k, v, f)
+(f::StructClosure{T,A,S,FS,FSS,FT})(k, v) where {T,A,S,FS,FSS,FT} = findfield(T, k, v, f)
 
 @inline makenoarg(style, ::Type{T}, source) where {T} = makenoarg(style, initialize(style, T, source), source)
 
