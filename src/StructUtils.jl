@@ -489,6 +489,45 @@ liftkey(::Type{T}, x) where {T} = lift(T, x)
 liftkey(f, st::StructStyle, ::Type{T}, x) where {T} = f(liftkey(st, T, x))
 
 """
+    StructUtils.extract(style, ::Type{T}, source, tags) -> (value, state)
+
+The plumbing boundary between the `make` recursion and leaf-value conversion.
+When `make` determines a target type `T` is not aggregate-like (not `Tuple`,
+`dictlike`, `arraylike`, `noarg`, or `structlike`), it calls `extract` to
+convert the raw `source` representation into a value of type `T`.
+
+The default implementation calls [`StructUtils.lift`](@ref) and normalizes its
+return value, so user-defined `lift` methods may return either a plain value
+(preferred) or a `(value, state)` tuple.
+
+Source/format packages (e.g. JSON.jl) should overload `extract` for *source
+types they own* (e.g. `JSON.LazyValue`) in order to materialize scalar values
+before calling user-level `lift` hooks, and to thread source-specific state
+(e.g. a byte position) back through the `make` machinery. `extract` should not
+be overloaded for target types — overload `lift` instead. This split keeps the
+user-facing `lift` free of raw source representations and internal state.
+"""
+function extract end
+
+_isliftpair(x) = x isa Tuple && !(x isa NamedTuple) && length(x) == 2
+_normalizelift(x, state) = _isliftpair(x) ? x : (x, state)
+
+extract(st::StructStyle, ::Type{T}, source, tags) where {T} =
+    _normalizelift(lift(st, T, source, tags), defaultstate(st))
+
+"""
+    StructUtils.preparekey(k)
+
+Hook for source/format packages to normalize raw key representations before
+they are passed to [`StructUtils.liftkey`](@ref) during `dictlike`
+construction. The default is the identity function. Source packages should
+overload this for internal key types that must never escape to user-level code
+(e.g. JSON.jl's `PtrString`). Like [`StructUtils.extract`](@ref), this should
+only be overloaded for key types the source package owns.
+"""
+preparekey(k) = k
+
+"""
     StructUtils.applyeach(style, f, x) -> Union{StructUtils.EarlyReturn, Nothing}
 
 A custom `foreach`-like function that operates specifically on `(key, val)` or `(ind, val)` pairs,
@@ -900,7 +939,7 @@ function make(style::StructStyle, T::Type, source, tags)
     if T <: Tuple || dictlike(style, T) || arraylike(style, T) || noarg(style, T) || structlike(style, T)
         return make(style, T, source)
     else
-        return lift(style, T, source, tags)
+        return extract(style, T, source, tags)
     end
 end
 
@@ -967,7 +1006,7 @@ function make(style::StructStyle, T::Type, source)
     elseif structlike(style, T)
         return makestruct(style, T, source)
     else
-        return lift(style, T, source)
+        return extract(style, T, source, (;))
     end
 end
 
@@ -1033,7 +1072,7 @@ end
 
 function (f::DictClosure{T,S})(k, v) where {T,S}
     val, st = make(f.style, _valtype(f.dict), v)
-    addkeyval!(f.dict, liftkey(f.style, _keytype(f.dict), k), val)
+    addkeyval!(f.dict, liftkey(f.style, _keytype(f.dict), preparekey(k)), val)
     return st
 end
 
