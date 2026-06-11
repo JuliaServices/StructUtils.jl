@@ -41,6 +41,20 @@ function StructUtils.fieldtags(st::PerFieldTagStyle, ::Type{PerFieldTagged}, fie
     return (;)
 end
 
+# extract/preparekey plumbing hook test types
+struct ExtractSource
+    val::Int
+end
+struct BareLiftStyle <: StructUtils.StructStyle end
+StructUtils.lift(::BareLiftStyle, ::Type{Int}, x) = Int(x) + 100 # bare (non-tuple) return
+struct WrappedKey
+    k::String
+end
+StructUtils.preparekey(k::WrappedKey) = k.k
+# format-style extract overload: unwraps the raw source before lifting
+StructUtils.extract(st::StructUtils.StructStyle, ::Type{T}, src::ExtractSource, tags) where {T} =
+    StructUtils.extract(st, T, src.val, tags)
+
 include(joinpath(dirname(pathof(StructUtils)), "../test/macros.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/struct.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/selectors.jl"))
@@ -189,6 +203,21 @@ println("Tuple")
     StructUtils.make!(pmut2, (id=0, name="Jane"); style=StrictUnknownFieldStyle())
     @test pmut2.id == 0 && pmut2.name == "Jane"
     @test_throws UnknownFieldTestError StructUtils.make!(pmut2, (id=0, name="Joan", rate=3.14); style=StrictUnknownFieldStyle())
+end
+
+@testset "extract/preparekey plumbing" begin
+    # default extract: lift + normalization of bare (non-tuple) lift returns
+    @test StructUtils.extract(StructUtils.DefaultStyle(), Int, 3, (;)) == (3, nothing)
+    @test StructUtils.extract(BareLiftStyle(), Int, 3, (;)) == (103, nothing)
+    # make routes leaf conversion through extract, so bare lift returns work
+    @test StructUtils.make(Int, 3, BareLiftStyle()) == 103
+    @test StructUtils.make(Vector{Int}, [1, 2], BareLiftStyle()) == [101, 102]
+    # format packages can overload extract for source types they own
+    @test StructUtils.make(Int, ExtractSource(5)) == 5
+    @test StructUtils.make(Vector{Int}, [ExtractSource(1), ExtractSource(2)]) == [1, 2]
+    # preparekey normalizes raw keys before liftkey during dictlike construction
+    @test StructUtils.preparekey(WrappedKey("a")) == "a"
+    @test StructUtils.make(Dict{String,Int}, [WrappedKey("a") => 1, WrappedKey("b") => 2]) == Dict("a" => 1, "b" => 2)
 end
 
 @testset "target fieldtags are cached during make" begin

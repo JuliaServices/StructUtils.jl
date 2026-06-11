@@ -488,6 +488,8 @@ liftkey(::StructStyle, ::Type{T}, x) where {T} = liftkey(T, x)
 liftkey(::Type{T}, x) where {T} = lift(T, x)
 liftkey(f, st::StructStyle, ::Type{T}, x) where {T} = f(liftkey(st, T, x))
 
+Base.Experimental.@max_methods 1 function extract end
+
 """
     StructUtils.extract(style, ::Type{T}, source, tags) -> (value, state)
 
@@ -506,8 +508,14 @@ before calling user-level `lift` hooks, and to thread source-specific state
 (e.g. a byte position) back through the `make` machinery. `extract` should not
 be overloaded for target types — overload `lift` instead. This split keeps the
 user-facing `lift` free of raw source representations and internal state.
+
+`extract` is declared with `Base.Experimental.@max_methods 1`: at abstract call
+sites (where the target type is not concrete, e.g. after inference widening in
+deeply nested `make` recursion), inference bails out immediately instead of
+exploring every candidate method body. Concrete call sites — the entire static
+hot path — always have exactly one applicable method and infer precisely.
 """
-function extract end
+extract
 
 _isliftpair(x) = x isa Tuple && !(x isa NamedTuple) && length(x) == 2
 _normalizelift(x, state) = _isliftpair(x) ? x : (x, state)
