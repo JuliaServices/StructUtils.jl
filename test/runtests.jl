@@ -55,6 +55,31 @@ StructUtils.preparekey(k::WrappedKey) = k.k
 StructUtils.extract(st::StructUtils.StructStyle, ::Type{T}, src::ExtractSource, tags) where {T} =
     StructUtils.extract(st, T, src.val, tags)
 
+struct SourceValue
+    val::Int
+end
+struct SourceObject
+    vals::Vector{Pair{String,SourceValue}}
+end
+struct SourceUnknownStyle <: StructUtils.StructStyle end
+struct SourceUnknownTarget
+    x::Int
+end
+StructUtils.extract(st::StructUtils.StructStyle, ::Type{T}, src::SourceValue, tags) where {T} =
+    StructUtils.extract(st, T, src.val, tags)
+function StructUtils.applyeach(st::StructUtils.StructStyle, f, src::SourceObject)
+    state = StructUtils.defaultstate(st)
+    for pair in src.vals
+        state = f(pair.first, pair.second)
+        state isa StructUtils.EarlyReturn && return state
+    end
+    return state
+end
+StructUtils.handleunknownfield(st::StructUtils.StructStyle, ::Type{T}, key, value::SourceValue) where {T} =
+    StructUtils.unknownfield(st, T, key, value)
+StructUtils.unknownfield(::SourceUnknownStyle, ::Type{SourceUnknownTarget}, key, value) =
+    (:user_unknownfield, key)
+
 include(joinpath(dirname(pathof(StructUtils)), "../test/macros.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/struct.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/selectors.jl"))
@@ -218,6 +243,11 @@ end
     # preparekey normalizes raw keys before liftkey during dictlike construction
     @test StructUtils.preparekey(WrappedKey("a")) == "a"
     @test StructUtils.make(Dict{String,Int}, [WrappedKey("a") => 1, WrappedKey("b") => 2]) == Dict("a" => 1, "b" => 2)
+    # source packages can handle unknown source values without colliding with user unknownfield hooks
+    src = SourceObject(["x" => SourceValue(1), "extra" => SourceValue(2)])
+    val, state = StructUtils.make(SourceUnknownStyle(), SourceUnknownTarget, src)
+    @test val == SourceUnknownTarget(1)
+    @test state == (:user_unknownfield, "extra")
 end
 
 @testset "target fieldtags are cached during make" begin

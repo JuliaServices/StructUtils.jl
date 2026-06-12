@@ -132,6 +132,24 @@ function unknownfield end
 unknownfield(st::StructStyle, ::Type{T}, key, value) where {T} = defaultstate(st)
 
 """
+    StructUtils.handleunknownfield(::StructStyle, ::Type{T}, key, value)
+
+Source-side dispatch point used by [`StructUtils.make`](@ref) and
+[`StructUtils.make!`](@ref) after a source key or index does not match target
+type `T`.
+
+The default implementation delegates to [`StructUtils.unknownfield`](@ref).
+Custom struct styles should generally overload `unknownfield`; source/format
+packages that need source-local behavior should overload `handleunknownfield`
+for source value types they own, then delegate to `unknownfield` when the
+unknown field should reach user style hooks.
+"""
+function handleunknownfield end
+
+handleunknownfield(st::StructStyle, ::Type{T}, key, value) where {T} =
+    unknownfield(st, T, key, value)
+
+"""
     StructUtils.fieldtags(::StructStyle, ::Type{T}) -> NamedTuple
     StructUtils.fieldtags(::StructStyle, ::Type{T}, fieldname) -> NamedTuple
 
@@ -1060,7 +1078,7 @@ function (f::TupleClosure{T,A,S})(k, v) where {T,A,S}
             end
         end
     end
-    return st isa _MatchedState ? st.value : unknownfield(f.style, T, k, v)
+    return st isa _MatchedState ? st.value : handleunknownfield(f.style, T, k, v)
 end
 
 function maketuple(style, ::Type{T}, source) where {T}
@@ -1211,7 +1229,7 @@ function findfield(::Type{T}, k, v, f) where {T}
             end
         end
     end
-    return st isa _MatchedState ? st.value : unknownfield(f.style, T, k, v)
+    return st isa _MatchedState ? st.value : handleunknownfield(f.style, T, k, v)
 end
 
 (f::StructClosure{T,A,S,FS,FSS,FT})(k, v) where {T,A,S,FS,FSS,FT} = findfield(T, k, v, f)
