@@ -3,6 +3,9 @@ using Test
 const _TRIM_SAFE_ERROR_BUDGET = 0
 const _TRIM_SUPPORTED = VERSION >= v"1.12.0-rc1"
 const _TRIM_PRE_RELEASE = !isempty(VERSION.prerelease)
+const _TRIM_COMPILE_TIMEOUT_S = Sys.iswindows() ? 600.0 : 120.0
+const _TRIM_EXECUTABLE_TIMEOUT_S = Sys.iswindows() ? 120.0 : 30.0
+const _TRIM_USE_BUNDLE = Sys.iswindows()
 const _JULIAC_ENTRYPOINT_EXPR = "using JuliaC; if isdefined(JuliaC, :main); JuliaC.main(ARGS); else JuliaC._main_cli(ARGS); end"
 
 # Pkg.test() sets JULIA_LOAD_PATH restrictively, which prevents subprocesses
@@ -11,11 +14,6 @@ const _JULIAC_ENTRYPOINT_EXPR = "using JuliaC; if isdefined(JuliaC, :main); Juli
 function _clean_cmd(cmd::Cmd)
     env = Dict{String,String}(k => v for (k, v) in ENV if k != "JULIA_LOAD_PATH")
     return setenv(cmd, env)
-end
-
-function _trim_use_bundle()::Bool
-    default = Sys.iswindows() ? "1" : "0"
-    return get(ENV, "STRUCTUTILS_TRIM_BUNDLE", default) == "1"
 end
 
 function _setup_trim_env()
@@ -47,7 +45,7 @@ function _setup_trim_env()
     return env_path
 end
 
-function _run_trim_compile(project_path::String, script_path::String, output_name::String; timeout_s::Float64 = 120.0, bundle_dir::Union{Nothing, String} = nothing)
+function _run_trim_compile(project_path::String, script_path::String, output_name::String; timeout_s::Float64 = _TRIM_COMPILE_TIMEOUT_S, bundle_dir::Union{Nothing, String} = nothing)
     julia_exe = joinpath(Sys.BINDIR, Base.julia_exename())
     cmd = if bundle_dir === nothing
         _clean_cmd(`$julia_exe --startup-file=no --history-file=no --code-coverage=none --project=$project_path -e $(_JULIAC_ENTRYPOINT_EXPR) -- --output-exe $output_name --project=$project_path --experimental --trim=safe $script_path`)
@@ -108,11 +106,6 @@ function _parse_trim_verify_totals(output::String)
     return parse(Int, m.captures[1]), parse(Int, m.captures[2])
 end
 
-function _trim_executable_timeout_s()::Float64
-    default = Sys.iswindows() ? "120.0" : "30.0"
-    return parse(Float64, get(ENV, "STRUCTUTILS_TRIM_EXE_TIMEOUT_S", default))
-end
-
 function _run_trim_case(project_path::String, script_file::String, output_name::String)
     script_path = joinpath(@__DIR__, script_file)
     @test isfile(script_path)
@@ -120,7 +113,7 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
     start_t = time()
     mktempdir() do tmpdir
         cd(tmpdir) do
-            bundle_dir = _trim_use_bundle() ? joinpath(tmpdir, "bundle") : nothing
+            bundle_dir = _TRIM_USE_BUNDLE ? joinpath(tmpdir, "bundle") : nothing
             exit_code, output, timed_out = _run_trim_compile(project_path, script_path, output_name; bundle_dir = bundle_dir)
             if timed_out
                 println("[trim] compile TIMED OUT for $(script_file)")
@@ -134,21 +127,20 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
             else
                 totals
             end
-            if get(ENV, "STRUCTUTILS_TRIM_PRINT_OUTPUT", "0") == "1" || trim_errors > 0
+            if trim_errors > 0 || trim_warnings > 0
                 println("---- trim compile output ($(script_file)) ----")
                 println(output)
                 println("---- end output ----")
             end
             @test trim_errors <= _TRIM_SAFE_ERROR_BUDGET
-            @test trim_warnings >= 0
+            @test trim_warnings == 0
             output_path = Sys.iswindows() ? "$(output_name).exe" : output_name
             if trim_errors == 0
                 run_path = bundle_dir === nothing ? output_path : joinpath(bundle_dir, "bin", output_path)
                 @test exit_code == 0
                 @test isfile(run_path)
-                run_timeout_s = _trim_executable_timeout_s()
                 run_cmd = `$(abspath(run_path))`
-                run_exit, run_output, run_timed_out = _run_command_with_timeout(run_cmd; timeout_s = run_timeout_s, log_label = "run")
+                run_exit, run_output, run_timed_out = _run_command_with_timeout(run_cmd; timeout_s = _TRIM_EXECUTABLE_TIMEOUT_S, log_label = "run")
                 if run_timed_out
                     println("[trim] executable TIMED OUT for $(script_file)")
                     println(run_output)
