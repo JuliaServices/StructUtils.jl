@@ -620,17 +620,20 @@ function applyeach(st::StructStyle, f, x::T) where {T}
                 ftags = fieldtags(st, T, $fname)
                 if !haskey(ftags, :ignore) || !ftags.ignore
                     fname = get(ftags, :name, $fname)
-                    ret = if isdefined(x, $i)
-                        key = lowerkey(st, fname)
-                        val = lower(st, getfield(x, $i), ftags)
-                        $callex
+                    # hoist the value out of all three source branches, then make the
+                    # (single) closure call through the isa split — a call left inside
+                    # any one branch keeps its unsplit dynamic dispatch
+                    val = if isdefined(x, $i)
+                        lower(st, getfield(x, $i), ftags)
                     elseif haskey(defs, $fname)
                         # this branch should be really rare because we should
                         # have applied a field default in the struct constructor
-                        f(lowerkey(st, fname), lower(st, defs[$fname], ftags))
+                        lower(st, defs[$fname], ftags)
                     else
-                        f(lowerkey(st, fname), lower(st, nothing, ftags))
+                        lower(st, nothing, ftags)
                     end
+                    key = lowerkey(st, fname)
+                    ret = $callex
                     ret isa EarlyReturn && return ret
                 end
             end)
