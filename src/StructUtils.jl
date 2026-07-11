@@ -600,12 +600,27 @@ function applyeach(st::StructStyle, f, x::T) where {T}
         end
         for i = 1:N
             fname = Meta.quot(fieldname(T, i))
+            # for small-Union fields, split the closure call per component with an
+            # explicit isa chain: inference doesn't reliably union-split these call
+            # sites on its own, leaving dynamic dispatch that `--trim` can't resolve.
+            # `lower` can change the value's type (custom lowerings), so the final
+            # `else` keeps those correct — it's dead code for identity lowers.
+            callex = :(f(key, val))
+            ft = fieldtype(T, i)
+            comps = ft isa Union ? Base.uniontypes(ft) : nothing
+            if comps !== nothing && length(comps) <= 4 && all(c -> isconcretetype(c) || c === Nothing, comps)
+                for c in reverse(comps)
+                    callex = Expr(:if, :(val isa $c), :(f(key, val)), callex)
+                end
+            end
             push!(ex.args, quote
                 ftags = fieldtags(st, T, $fname)
                 if !haskey(ftags, :ignore) || !ftags.ignore
                     fname = get(ftags, :name, $fname)
                     ret = if isdefined(x, $i)
-                        f(lowerkey(st, fname), lower(st, getfield(x, $i), ftags))
+                        key = lowerkey(st, fname)
+                        val = lower(st, getfield(x, $i), ftags)
+                        $callex
                     elseif haskey(defs, $fname)
                         # this branch should be really rare because we should
                         # have applied a field default in the struct constructor
@@ -846,7 +861,10 @@ end
 @inline abstractcollectionpassthrough(style::StructStyle, ::Type{T}, source) where {T} =
     isabstracttype(T) && source isa T && (dictlike(style, T) || arraylike(style, T))
 
-function make(style::StructStyle, T::Type, source, tags)
+# `::Type{T} where T` (not bare `T::Type`, which julia deliberately doesn't specialize):
+# this dispatcher must specialize per target type so its trait branches fold — otherwise
+# one generic instance with everything dynamic ends up in `--trim` binaries
+function make(style::StructStyle, ::Type{T}, source, tags) where {T}
     if haskey(tags, :choosetype)
         return make(style, tags.choosetype(source), source, _delete(tags, :choosetype))
     end
@@ -868,33 +886,8 @@ function make(style::StructStyle, T::Type, source, tags)
         # we can disambiguate by checking if source is arraylike;
         # only applies when there's exactly one arraylike and one non-arraylike member
         if T isa Union
-            types = Base.uniontypes(T)
-            arr_type = nothing
-            scalar_type = nothing
-            ambiguous = false
-            for t in types
-                if arraylike(style, t)
-                    # more than one arraylike type means we can't disambiguate
-                    if arr_type !== nothing
-                        ambiguous = true
-                        break
-                    end
-                    arr_type = t
-                else
-                    if scalar_type !== nothing
-                        ambiguous = true
-                        break
-                    end
-                    scalar_type = t
-                end
-            end
-            if !ambiguous && arr_type !== nothing && scalar_type !== nothing
-                if arraylike(style, source)
-                    return make(style, arr_type, source, tags)
-                else
-                    return make(style, scalar_type, source, tags)
-                end
-            end
+            r = _unionmake(style, T, source, tags)
+            r !== nothing && return r
         end
     end
     if T <: Tuple || dictlike(style, T) || arraylike(style, T) || noarg(style, T) || structlike(style, T)
@@ -904,7 +897,47 @@ function make(style::StructStyle, T::Type, source, tags)
     end
 end
 
-function make(style::StructStyle, T::Type, source)
+# unrolls the arraylike-vs-scalar union disambiguation with literal component types
+# (`Base.uniontypes` builds a runtime Vector{Any}, which makes the recursive `make`
+# calls dynamic — type-unstable and unresolvable under `--trim`). The rule can only
+# ever match two-component unions ("exactly one arraylike and one non-arraylike"),
+# so anything else returns `nothing` (ambiguous) and the caller falls through.
+# The `arraylike` trait calls stay in the emitted code — they are style-dependent —
+# but fold at inference given the literal types.
+@generated function _unionmake(style::StructStyle, ::Type{T}, source, tags) where {T}
+    types = Base.uniontypes(T)
+    length(types) == 2 || return :(return nothing)
+    A, B = types
+    return quote
+        a_arr = arraylike(style, $A)
+        b_arr = arraylike(style, $B)
+        if a_arr && !b_arr
+            return arraylike(style, source) ? make(style, $A, source, tags) : make(style, $B, source, tags)
+        elseif b_arr && !a_arr
+            return arraylike(style, source) ? make(style, $B, source, tags) : make(style, $A, source, tags)
+        end
+        return nothing
+    end
+end
+
+@generated function _unionmake(style::StructStyle, ::Type{T}, source) where {T}
+    types = Base.uniontypes(T)
+    length(types) == 2 || return :(return nothing)
+    A, B = types
+    return quote
+        a_arr = arraylike(style, $A)
+        b_arr = arraylike(style, $B)
+        if a_arr && !b_arr
+            return arraylike(style, source) ? make(style, $A, source) : make(style, $B, source)
+        elseif b_arr && !a_arr
+            return arraylike(style, source) ? make(style, $B, source) : make(style, $A, source)
+        end
+        return nothing
+    end
+end
+
+# see the 4-arg method: must specialize per target type (`::Type{T}`, not `T::Type`)
+function make(style::StructStyle, ::Type{T}, source) where {T}
     if abstractcollectionpassthrough(style, T, source)
         return source, defaultstate(style)
     end
@@ -923,37 +956,10 @@ function make(style::StructStyle, T::Type, source)
                 return make(style, Base.nonnothingtype(T), source)
             end
         end
-        # for Union types like Union{T, Vector{T}} (after Nothing/Missing have been peeled),
-        # we can disambiguate by checking if source is arraylike;
-        # only applies when there's exactly one arraylike and one non-arraylike member
+        # see _unionmake: unrolled two-component union disambiguation
         if T isa Union
-            types = Base.uniontypes(T)
-            arr_type = nothing
-            scalar_type = nothing
-            ambiguous = false
-            for t in types
-                if arraylike(style, t)
-                    # more than one arraylike type means we can't disambiguate
-                    if arr_type !== nothing
-                        ambiguous = true
-                        break
-                    end
-                    arr_type = t
-                else
-                    if scalar_type !== nothing
-                        ambiguous = true
-                        break
-                    end
-                    scalar_type = t
-                end
-            end
-            if !ambiguous && arr_type !== nothing && scalar_type !== nothing
-                if arraylike(style, source)
-                    return make(style, arr_type, source)
-                else
-                    return make(style, scalar_type, source)
-                end
-            end
+            r = _unionmake(style, T, source)
+            r !== nothing && return r
         end
     end
     if T <: Tuple
@@ -995,26 +1001,35 @@ struct TupleClosure{T,A,S}
     i::Ptr{Int}
 end
 
-function (f::TupleClosure{T,A,S})(k, v) where {T,A,S}
-    st = _foreach(T) do i
-        if typeof(k) == Int
-            if k == i
-                intval, intst = make(f.style, fieldtype(T, i), v)
-                @inbounds f.vals[i] = intval
-                return EarlyReturn(_MatchedState(intst))
+# generated for the same reason as `findfield`: literal field indices/types keep the
+# `make` calls concrete (type-stable, and resolvable under `--trim`)
+@generated function _tupleclosure(f::TupleClosure{T}, k, v) where {T}
+    ex = Expr(:block)
+    push!(ex.args, :(Base.@_inline_meta))
+    for i = 1:fieldcount(T)
+        ft = fieldtype(T, i)
+        push!(ex.args, quote
+            if typeof(k) == Int
+                if k == $i
+                    intval, intst = make(f.style, $ft, v)
+                    @inbounds f.vals[$i] = intval
+                    return intst
+                end
+            else
+                if unsafe_load(f.i) == $i
+                    unsafe_store!(f.i, $i + 1)
+                    elseval, elsest = make(f.style, $ft, v)
+                    @inbounds f.vals[$i] = elseval
+                    return elsest
+                end
             end
-        else
-            j = unsafe_load(f.i)
-            if j == i
-                unsafe_store!(f.i, i + 1)
-                elseval, elsest = make(f.style, fieldtype(T, i), v)
-                @inbounds f.vals[i] = elseval
-                return EarlyReturn(_MatchedState(elsest))
-            end
-        end
+        end)
     end
-    return st isa _MatchedState ? st.value : unknownfield(f.style, T, k, v)
+    push!(ex.args, :(return unknownfield(f.style, T, k, v)))
+    return ex
 end
+
+(f::TupleClosure{T,A,S})(k, v) where {T,A,S} = _tupleclosure(f, k, v)
 
 function maketuple(style, ::Type{T}, source) where {T}
     vals = mem(fieldcount(T))
@@ -1134,37 +1149,46 @@ end
 
 setval!(vals::T, x, i) where {T} = _setfield!(vals, i, x)
 
-function findfield(::Type{T}, k, v, f) where {T}
-    st = _foreach(T) do i
-        if typeof(k) == Symbol
-            fn = f.fsyms[i]
-            ftags = f.ftags[i]
-            field = get(ftags, :name, fn)
-            if keyeq(k, field) || keyeq(k, fn)
-                symval, symst = make(f.style, fieldtype(T, i), v, ftags)
-                setval!(f.vals, symval, i)
-                return EarlyReturn(_MatchedState(symst))
+# generated with literal field indices/types: a runtime `i` makes `fieldtype(T, i)`
+# abstract, which funnels every `make` call into the unspecialized `T::Type` method —
+# type-unstable and a pile of unresolvable dynamic calls under `--trim`
+@generated function findfield(::Type{T}, k, v, f) where {T}
+    ex = Expr(:block)
+    push!(ex.args, :(Base.@_inline_meta))
+    for i = 1:fieldcount(T)
+        ft = fieldtype(T, i)
+        push!(ex.args, quote
+            if typeof(k) == Symbol
+                let fn = f.fsyms[$i], ftags = f.ftags[$i]
+                    field = get(ftags, :name, fn)
+                    if keyeq(k, field) || keyeq(k, fn)
+                        symval, symst = make(f.style, $ft, v, ftags)
+                        setval!(f.vals, symval, $i)
+                        return symst
+                    end
+                end
+            elseif typeof(k) == Int
+                if k == $i
+                    let ftags = f.ftags[$i]
+                        intval, intst = make(f.style, $ft, v, ftags)
+                        setval!(f.vals, intval, $i)
+                        return intst
+                    end
+                end
+            else
+                let fstr = f.fstrs[$i], ftags = f.ftags[$i]
+                    field = get(ftags, :name, fstr)
+                    if keyeq(k, field)
+                        strval, strst = make(f.style, $ft, v, ftags)
+                        setval!(f.vals, strval, $i)
+                        return strst
+                    end
+                end
             end
-        elseif typeof(k) == Int
-            if k == i
-                ftags = f.ftags[i]
-                intval, intst = make(f.style, fieldtype(T, i), v, ftags)
-                setval!(f.vals, intval, i)
-                return EarlyReturn(_MatchedState(intst))
-            end
-        else
-            fn = f.fsyms[i]
-            fstr = f.fstrs[i]
-            ftags = f.ftags[i]
-            field = get(ftags, :name, fstr)
-            if keyeq(k, field)
-                strval, strst = make(f.style, fieldtype(T, i), v, ftags)
-                setval!(f.vals, strval, i)
-                return EarlyReturn(_MatchedState(strst))
-            end
-        end
+        end)
     end
-    return st isa _MatchedState ? st.value : unknownfield(f.style, T, k, v)
+    push!(ex.args, :(return unknownfield(f.style, T, k, v)))
+    return ex
 end
 
 (f::StructClosure{T,A,S,FS,FSS,FT})(k, v) where {T,A,S,FS,FSS,FT} = findfield(T, k, v, f)
