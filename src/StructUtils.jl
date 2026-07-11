@@ -610,7 +610,10 @@ function applyeach(st::StructStyle, f, x::T) where {T}
             comps = ft isa Union ? Base.uniontypes(ft) : nothing
             if comps !== nothing && length(comps) <= 4 && all(c -> isconcretetype(c) || c === Nothing, comps)
                 for c in reverse(comps)
-                    callex = Expr(:if, :(val isa $c), :(f(key, val)), callex)
+                    # the typeassert matters: with identical `f(key, val)` calls in
+                    # every branch, the optimizer tail-merges them back into a single
+                    # call with a φ-union argument, undoing the split
+                    callex = Expr(:if, :(val isa $c), :(f(key, val::$c)), callex)
                 end
             end
             push!(ex.args, quote
