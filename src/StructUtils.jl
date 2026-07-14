@@ -1,5 +1,22 @@
 module StructUtils
 
+using Preferences
+
+# Compile-time preference ("trim_specialize"): `juliac --trim` builds opt into
+# fully-specialized struct machinery — per-target-type `make` dispatchers,
+# literal-unrolled `findfield`/tuple closures, and isa-split small-Union field
+# writes — which the trim verifier can resolve statically. The default keeps
+# the single-generic-instance forms: on a large nested-struct workload
+# (JSON.jl benchmarks/structs.jl Root) full specialization roughly doubles
+# first-call compile time, which library users pay on every fresh session,
+# while trim builds pay it once at AOT-compile time.
+#
+# Enable from the build project with:
+#     Preferences.set_preferences!(StructUtils, "trim_specialize" => true)
+# (a Preference, not an ENV switch, so flipping it correctly invalidates the
+# precompile cache)
+const TRIM_SPECIALIZE = @load_preference("trim_specialize", false)::Bool
+
 using Dates, UUIDs
 
 export @noarg, @defaults, @tags, @kwarg, @nonstruct, Selectors
@@ -608,7 +625,7 @@ function applyeach(st::StructStyle, f, x::T) where {T}
             callex = :(f(key, val))
             ft = fieldtype(T, i)
             comps = ft isa Union ? Base.uniontypes(ft) : nothing
-            if comps !== nothing && length(comps) <= 4 && all(c -> isconcretetype(c) || c === Nothing, comps)
+            if TRIM_SPECIALIZE && comps !== nothing && length(comps) <= 4 && all(c -> isconcretetype(c) || c === Nothing, comps)
                 for c in reverse(comps)
                     # the typeassert matters: with identical `f(key, val)` calls in
                     # every branch, the optimizer tail-merges them back into a single
@@ -870,7 +887,11 @@ end
 # `::Type{T} where T` (not bare `T::Type`, which julia deliberately doesn't specialize):
 # this dispatcher must specialize per target type so its trait branches fold — otherwise
 # one generic instance with everything dynamic ends up in `--trim` binaries
-function make(style::StructStyle, ::Type{T}, source, tags) where {T}
+# One shared body, two signature forms (see TRIM_SPECIALIZE): `::Type{T} where T`
+# specializes per target type — required for trim verification, but on big nested
+# structs it roughly doubles first-call compile time versus the bare `T::Type`
+# form, which julia deliberately compiles as a single generic instance.
+const _MAKE4_BODY = quote
     if haskey(tags, :choosetype)
         return make(style, tags.choosetype(source), source, _delete(tags, :choosetype))
     end
@@ -901,6 +922,52 @@ function make(style::StructStyle, ::Type{T}, source, tags) where {T}
     else
         return lift(style, T, source, tags)
     end
+end
+const _MAKE3_BODY = quote
+    if abstractcollectionpassthrough(style, T, source)
+        return source, defaultstate(style)
+    end
+    # start with some hard-coded Union cases
+    if T !== Any
+        if T >: Missing && T !== Missing
+            if nulllike(style, source)
+                return make(style, Missing, source)
+            else
+                return make(style, nonmissingtype(T), source)
+            end
+        elseif T >: Nothing && T !== Nothing
+            if nulllike(style, source)
+                return make(style, Nothing, source)
+            else
+                return make(style, Base.nonnothingtype(T), source)
+            end
+        end
+        # see _unionmake: unrolled two-component union disambiguation
+        if T isa Union
+            r = _unionmake(style, T, source)
+            r !== nothing && return r
+        end
+    end
+    if T <: Tuple
+        return maketuple(style, T, source)
+    elseif dictlike(style, T)
+        return makedict(style, T, source)
+    elseif arraylike(style, T)
+        return makearray(style, T, source)
+    elseif noarg(style, T)
+        return makenoarg(style, T, source)
+    elseif structlike(style, T)
+        return makestruct(style, T, source)
+    else
+        return lift(style, T, source)
+    end
+end
+let sig4 = TRIM_SPECIALIZE ? :(make(style::StructStyle, ::Type{T}, source, tags) where {T}) :
+                             :(make(style::StructStyle, T::Type, source, tags)),
+    sig3 = TRIM_SPECIALIZE ? :(make(style::StructStyle, ::Type{T}, source) where {T}) :
+                             :(make(style::StructStyle, T::Type, source))
+    @eval $(Expr(:function, sig4, _MAKE4_BODY))
+    @eval $(Expr(:function, sig3, _MAKE3_BODY))
 end
 
 # unrolls the arraylike-vs-scalar union disambiguation with literal component types
@@ -943,45 +1010,6 @@ end
 end
 
 # see the 4-arg method: must specialize per target type (`::Type{T}`, not `T::Type`)
-function make(style::StructStyle, ::Type{T}, source) where {T}
-    if abstractcollectionpassthrough(style, T, source)
-        return source, defaultstate(style)
-    end
-    # start with some hard-coded Union cases
-    if T !== Any
-        if T >: Missing && T !== Missing
-            if nulllike(style, source)
-                return make(style, Missing, source)
-            else
-                return make(style, nonmissingtype(T), source)
-            end
-        elseif T >: Nothing && T !== Nothing
-            if nulllike(style, source)
-                return make(style, Nothing, source)
-            else
-                return make(style, Base.nonnothingtype(T), source)
-            end
-        end
-        # see _unionmake: unrolled two-component union disambiguation
-        if T isa Union
-            r = _unionmake(style, T, source)
-            r !== nothing && return r
-        end
-    end
-    if T <: Tuple
-        return maketuple(style, T, source)
-    elseif dictlike(style, T)
-        return makedict(style, T, source)
-    elseif arraylike(style, T)
-        return makearray(style, T, source)
-    elseif noarg(style, T)
-        return makenoarg(style, T, source)
-    elseif structlike(style, T)
-        return makestruct(style, T, source)
-    else
-        return lift(style, T, source)
-    end
-end
 
 if VERSION < v"1.11"
     mem(n) = Vector{Any}(undef, n)
@@ -1009,6 +1037,8 @@ end
 
 # generated for the same reason as `findfield`: literal field indices/types keep the
 # `make` calls concrete (type-stable, and resolvable under `--trim`)
+@static if TRIM_SPECIALIZE
+
 @generated function _tupleclosure(f::TupleClosure{T}, k, v) where {T}
     ex = Expr(:block)
     push!(ex.args, :(Base.@_inline_meta))
@@ -1035,7 +1065,33 @@ end
     return ex
 end
 
+
 (f::TupleClosure{T,A,S})(k, v) where {T,A,S} = _tupleclosure(f, k, v)
+
+else
+
+function (f::TupleClosure{T,A,S})(k, v) where {T,A,S}
+    st = _foreach(T) do i
+        if typeof(k) == Int
+            if k == i
+                intval, intst = make(f.style, fieldtype(T, i), v)
+                @inbounds f.vals[i] = intval
+                return EarlyReturn(_MatchedState(intst))
+            end
+        else
+            j = unsafe_load(f.i)
+            if j == i
+                unsafe_store!(f.i, i + 1)
+                elseval, elsest = make(f.style, fieldtype(T, i), v)
+                @inbounds f.vals[i] = elseval
+                return EarlyReturn(_MatchedState(elsest))
+            end
+        end
+    end
+    return st isa _MatchedState ? st.value : unknownfield(f.style, T, k, v)
+end
+
+end # @static if TRIM_SPECIALIZE
 
 function maketuple(style, ::Type{T}, source) where {T}
     vals = mem(fieldcount(T))
@@ -1161,6 +1217,11 @@ setval!(vals::T, x, i) where {T} = _setfield!(vals, i, x)
 # generated with literal field indices/types: a runtime `i` makes `fieldtype(T, i)`
 # abstract, which funnels every `make` call into the unspecialized `T::Type` method —
 # type-unstable and a pile of unresolvable dynamic calls under `--trim`
+@static if TRIM_SPECIALIZE
+
+# literal field indices and field types: the runtime-`i` closure form below
+# makes `fieldtype(T, i)` abstract, funneling every make call through one
+# generic instance — unresolvable under --trim
 @generated function findfield(::Type{T}, k, v, f) where {T}
     ex = Expr(:block)
     push!(ex.args, :(Base.@_inline_meta))
@@ -1199,6 +1260,43 @@ setval!(vals::T, x, i) where {T} = _setfield!(vals, i, x)
     push!(ex.args, :(return unknownfield(f.style, T, k, v)))
     return ex
 end
+
+else
+
+function findfield(::Type{T}, k, v, f) where {T}
+    st = _foreach(T) do i
+        if typeof(k) == Symbol
+            fn = f.fsyms[i]
+            ftags = f.ftags[i]
+            field = get(ftags, :name, fn)
+            if keyeq(k, field) || keyeq(k, fn)
+                symval, symst = make(f.style, fieldtype(T, i), v, ftags)
+                setval!(f.vals, symval, i)
+                return EarlyReturn(_MatchedState(symst))
+            end
+        elseif typeof(k) == Int
+            if k == i
+                ftags = f.ftags[i]
+                intval, intst = make(f.style, fieldtype(T, i), v, ftags)
+                setval!(f.vals, intval, i)
+                return EarlyReturn(_MatchedState(intst))
+            end
+        else
+            fn = f.fsyms[i]
+            fstr = f.fstrs[i]
+            ftags = f.ftags[i]
+            field = get(ftags, :name, fstr)
+            if keyeq(k, field)
+                strval, strst = make(f.style, fieldtype(T, i), v, ftags)
+                setval!(f.vals, strval, i)
+                return EarlyReturn(_MatchedState(strst))
+            end
+        end
+    end
+    return st isa _MatchedState ? st.value : unknownfield(f.style, T, k, v)
+end
+
+end # @static if TRIM_SPECIALIZE
 
 (f::StructClosure{T,A,S,FS,FSS,FT})(k, v) where {T,A,S,FS,FSS,FT} = findfield(T, k, v, f)
 
