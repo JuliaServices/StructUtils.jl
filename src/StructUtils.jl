@@ -1053,7 +1053,10 @@ struct DictClosure{T,S}
 end
 
 function (f::DictClosure{T,S})(k, v) where {T,S}
-    val, st = make(f.style, _valtype(f.dict), v)
+    # NTuple{2,Any} assert: an Any-valued target (e.g. Dict{String,Any}) makes
+    # the make() return type opaque, and destructuring an opaque value is
+    # dynamic dispatch under `juliac --trim`
+    val, st = make(f.style, _valtype(f.dict), v)::NTuple{2,Any}
     addkeyval!(f.dict, liftkey(f.style, _keytype(f.dict), k), val)
     return st
 end
@@ -1071,7 +1074,7 @@ struct ArrayClosure{T,S}
 end
 
 function (f::ArrayClosure{T,S})(_, v) where {T,S}
-    val, st = make(f.style, eltype(f.arr), v)
+    val, st = make(f.style, eltype(f.arr), v)::NTuple{2,Any}
     push!(f.arr, val)
     return st
 end
@@ -1083,7 +1086,7 @@ struct FixedArrayClosure{A,S}
 end
 
 function (f::FixedArrayClosure{A,S})(_, v) where {A,S}
-    val, st = make(f.style, eltype(f.arr), v)
+    val, st = make(f.style, eltype(f.arr), v)::NTuple{2,Any}
     i = f.idx[]
     @inbounds f.arr[i] = val
     f.idx[] = i + 1
