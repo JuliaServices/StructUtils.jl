@@ -420,7 +420,22 @@ derived from lifting the value.
 """
 function lift end
 
-lift(::Type{Symbol}, x) = Symbol(x)
+function lift(::Type{Symbol}, @nospecialize(x))
+    # isa-laddered: the generic Symbol(x) funnels any reachable value type
+    # into string(x) — for BigFloat that is MPFR string formatting and for
+    # collections the array-show machinery, none of it trim-verifiable. The
+    # dynamic fallback stays for JIT sessions.
+    x isa Symbol && return x
+    x isa String && return Symbol(x::String)
+    if !TRIM_BUILD
+        # JIT-only: the abstract String(::AbstractString) constructor and the
+        # fully generic fallback (formats convert their string wrappers to
+        # String before lifting, so trim builds never need these)
+        x isa AbstractString && return Symbol(String(x))
+        return Symbol(x)
+    end
+    throw(ArgumentError("cannot lift a non-string value to Symbol in a trim build"))
+end
 lift(::Type{String}, x::Symbol) = String(x)
 lift(::Type{T}, x) where {T} = Base.issingletontype(T) ? T() : convert(T, x)
 lift(::Type{>:Missing}, ::Nothing) = missing
