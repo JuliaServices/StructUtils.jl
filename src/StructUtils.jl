@@ -864,43 +864,56 @@ function make(style::StructStyle, T::Type, source, tags)
                 return make(style, Base.nonnothingtype(T), source, tags)
             end
         end
-        # for Union types like Union{T, Vector{T}} (after Nothing/Missing have been peeled),
-        # we can disambiguate by checking if source is arraylike;
-        # only applies when there's exactly one arraylike and one non-arraylike member
+        # see _unionmake: unrolled two-component union disambiguation
         if T isa Union
-            types = Base.uniontypes(T)
-            arr_type = nothing
-            scalar_type = nothing
-            ambiguous = false
-            for t in types
-                if arraylike(style, t)
-                    # more than one arraylike type means we can't disambiguate
-                    if arr_type !== nothing
-                        ambiguous = true
-                        break
-                    end
-                    arr_type = t
-                else
-                    if scalar_type !== nothing
-                        ambiguous = true
-                        break
-                    end
-                    scalar_type = t
-                end
-            end
-            if !ambiguous && arr_type !== nothing && scalar_type !== nothing
-                if arraylike(style, source)
-                    return make(style, arr_type, source, tags)
-                else
-                    return make(style, scalar_type, source, tags)
-                end
-            end
+            r = _unionmake(style, T, source, tags)
+            r !== nothing && return r
         end
     end
     if T <: Tuple || dictlike(style, T) || arraylike(style, T) || noarg(style, T) || structlike(style, T)
         return make(style, T, source)
     else
         return lift(style, T, source, tags)
+    end
+end
+
+# unrolls the arraylike-vs-scalar union disambiguation with literal component
+# types: `Base.uniontypes` builds a runtime Vector{Any}, which makes the
+# recursive `make` calls dynamic even when the target type constant-folds.
+# The rule can only ever match two-component unions ("exactly one arraylike
+# and one non-arraylike"), so anything else returns `nothing` (ambiguous) and
+# the caller falls through. The `arraylike` trait calls stay in the emitted
+# code — they are style-dependent — but fold at inference given the literal
+# types.
+@generated function _unionmake(style::StructStyle, ::Type{T}, source, tags) where {T}
+    types = Base.uniontypes(T)
+    length(types) == 2 || return :(return nothing)
+    A, B = types
+    return quote
+        a_arr = arraylike(style, $A)
+        b_arr = arraylike(style, $B)
+        if a_arr && !b_arr
+            return arraylike(style, source) ? make(style, $A, source, tags) : make(style, $B, source, tags)
+        elseif b_arr && !a_arr
+            return arraylike(style, source) ? make(style, $B, source, tags) : make(style, $A, source, tags)
+        end
+        return nothing
+    end
+end
+
+@generated function _unionmake(style::StructStyle, ::Type{T}, source) where {T}
+    types = Base.uniontypes(T)
+    length(types) == 2 || return :(return nothing)
+    A, B = types
+    return quote
+        a_arr = arraylike(style, $A)
+        b_arr = arraylike(style, $B)
+        if a_arr && !b_arr
+            return arraylike(style, source) ? make(style, $A, source) : make(style, $B, source)
+        elseif b_arr && !a_arr
+            return arraylike(style, source) ? make(style, $B, source) : make(style, $A, source)
+        end
+        return nothing
     end
 end
 
@@ -923,37 +936,10 @@ function make(style::StructStyle, T::Type, source)
                 return make(style, Base.nonnothingtype(T), source)
             end
         end
-        # for Union types like Union{T, Vector{T}} (after Nothing/Missing have been peeled),
-        # we can disambiguate by checking if source is arraylike;
-        # only applies when there's exactly one arraylike and one non-arraylike member
+        # see _unionmake: unrolled two-component union disambiguation
         if T isa Union
-            types = Base.uniontypes(T)
-            arr_type = nothing
-            scalar_type = nothing
-            ambiguous = false
-            for t in types
-                if arraylike(style, t)
-                    # more than one arraylike type means we can't disambiguate
-                    if arr_type !== nothing
-                        ambiguous = true
-                        break
-                    end
-                    arr_type = t
-                else
-                    if scalar_type !== nothing
-                        ambiguous = true
-                        break
-                    end
-                    scalar_type = t
-                end
-            end
-            if !ambiguous && arr_type !== nothing && scalar_type !== nothing
-                if arraylike(style, source)
-                    return make(style, arr_type, source)
-                else
-                    return make(style, scalar_type, source)
-                end
-            end
+            r = _unionmake(style, T, source)
+            r !== nothing && return r
         end
     end
     if T <: Tuple
@@ -1032,7 +1018,10 @@ struct DictClosure{T,S}
 end
 
 function (f::DictClosure{T,S})(k, v) where {T,S}
-    val, st = make(f.style, _valtype(f.dict), v)
+    # NTuple{2,Any} assert: an Any-valued target (e.g. Dict{String,Any}) makes
+    # the make() return type opaque, and destructuring an opaque value is
+    # dynamic dispatch under `juliac --trim`
+    val, st = make(f.style, _valtype(f.dict), v)::NTuple{2,Any}
     addkeyval!(f.dict, liftkey(f.style, _keytype(f.dict), k), val)
     return st
 end
@@ -1050,7 +1039,7 @@ struct ArrayClosure{T,S}
 end
 
 function (f::ArrayClosure{T,S})(_, v) where {T,S}
-    val, st = make(f.style, eltype(f.arr), v)
+    val, st = make(f.style, eltype(f.arr), v)::NTuple{2,Any}
     push!(f.arr, val)
     return st
 end
@@ -1062,7 +1051,7 @@ struct FixedArrayClosure{A,S}
 end
 
 function (f::FixedArrayClosure{A,S})(_, v) where {A,S}
-    val, st = make(f.style, eltype(f.arr), v)
+    val, st = make(f.style, eltype(f.arr), v)::NTuple{2,Any}
     i = f.idx[]
     @inbounds f.arr[i] = val
     f.idx[] = i + 1
