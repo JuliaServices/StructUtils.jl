@@ -614,20 +614,15 @@ function applyeach(st::StructStyle, f, x::T) where {T}
                 ftags = fieldtags(st, T, $fname)
                 if !haskey(ftags, :ignore) || !ftags.ignore
                     fname = get(ftags, :name, $fname)
-                    # hoist the value out of the three source branches so the
-                    # closure call is a single site with one φ argument —
-                    # keeps the call devirtualizable instead of three
-                    # branch-local calls with union-typed arguments
-                    val = if isdefined(x, $i)
-                        lower(st, getfield(x, $i), ftags)
+                    ret = if isdefined(x, $i)
+                        f(lowerkey(st, fname), lower(st, getfield(x, $i), ftags))
                     elseif haskey(defs, $fname)
                         # this branch should be really rare because we should
                         # have applied a field default in the struct constructor
-                        lower(st, defs[$fname], ftags)
+                        f(lowerkey(st, fname), lower(st, defs[$fname], ftags))
                     else
-                        lower(st, nothing, ftags)
+                        f(lowerkey(st, fname), lower(st, nothing, ftags))
                     end
-                    ret = f(lowerkey(st, fname), val)
                     ret isa EarlyReturn && return ret
                 end
             end)
