@@ -145,10 +145,11 @@ const IEVENT_SRC = Dict{String,Any}(
         StructUtils.make(cst, ICounted, Dict("c" => 2))
         @test cst.calls >= 2
         @test !StructUtils.fieldtable(ICounted, cst).eligible
-        # tuple alias name tags: classic path, both aliases match
+        # tuple alias name tags: interpreter-handled (alias match candidates
+        # in the field spec), both aliases match
         @test StructUtils.make(IAliased, Dict("value" => 7)).v == 7
         @test StructUtils.make(IAliased, Dict("v" => 8)).v == 8
-        @test !StructUtils.fieldtable(IAliased, StructUtils.DefaultStyle()).eligible
+        @test StructUtils.fieldtable(IAliased, StructUtils.DefaultStyle()).eligible
         # @nonstruct nested field lifts, never field-parses
         @test StructUtils.make(IHasPoint, Dict("p" => "3,4")).p == IPoint(3, 4)
     end
@@ -165,4 +166,72 @@ const IEVENT_SRC = Dict{String,Any}(
         @test_throws IUnknownFieldError StructUtils.make(IStrictStyle(), ITier,
             Dict{String,Any}("name" => "t", "bogus" => 1))
     end
+end
+
+# expanded interpreter coverage: shapes that previously routed classic
+@kwarg struct IWide
+    nv::Vector{Union{Int,Nothing}} = Union{Int,Nothing}[]
+    mv::Vector{Union{String,Missing}} = Union{String,Missing}[]
+    nested::Vector{Vector{Int}} = Vector{Int}[]
+    d::Dict{String,Int} = Dict{String,Int}()
+    dany::Dict{String,Any} = Dict{String,Any}()
+    dsym::Dict{Symbol,String} = Dict{Symbol,String}()
+    u::Union{String,Vector{String}} = ""
+    s::Set{Int} = Set{Int}()
+    alias::Int = 0 &(name=("alias", "alias2"),)
+end
+
+@noarg mutable struct IMutT
+    a::Int = 3
+    b::Union{String,Nothing} = nothing
+    c::Vector{Float64} = Float64[]
+end
+
+@kwarg struct IParam{N}
+    a::Int = 0
+    b::NTuple{N,Int} = ntuple(_ -> 0, N)
+end
+
+@testset "tier-0 expanded coverage" begin
+    st = StructUtils.DefaultStyle()
+    src = Dict{String,Any}(
+        "nv" => Any[1, nothing, 3],
+        "mv" => Any["x", nothing],
+        "nested" => Any[Any[1, 2], Any[3]],
+        "d" => Dict{String,Any}("k" => 2),
+        "dany" => Dict{String,Any}("k" => Any[1]),
+        "dsym" => Dict{String,Any}("s" => "v"),
+        "u" => Any["p", "q"],
+        "s" => Any[1, 2, 2],
+        "alias2" => 9,
+    )
+    w = StructUtils.make(IWide, src)
+    @test w.nv == [1, nothing, 3]
+    @test isequal(w.mv, ["x", missing])
+    @test w.nested == [[1, 2], [3]]
+    @test w.d == Dict("k" => 2) && w.d isa Dict{String,Int}
+    @test w.dany["k"] == [1]
+    @test w.dsym == Dict(:s => "v")
+    @test w.u == ["p", "q"]
+    @test StructUtils.make(IWide, Dict{String,Any}("u" => "solo")).u == "solo"
+    @test w.s == Set([1, 2])
+    @test w.alias == 9
+    @test StructUtils.make(IWide, Dict{String,Any}("alias" => 4)).alias == 4
+    @test StructUtils.fieldtable(IWide, st).eligible
+
+    # @noarg mutable targets through the interpreter
+    m = StructUtils.make(IMutT, Dict{String,Any}("b" => "z"))
+    @test m.a == 3 && m.b == "z" && isempty(m.c)
+    @test StructUtils.fieldtable(IMutT, st).eligible
+    m2 = StructUtils.make(IMutT, Dict{String,Any}("a" => 1))
+    @test m2.c !== m.c
+
+    # NamedTuple targets, registration-free
+    nt = StructUtils.make(@NamedTuple{p::Int, q::Union{String,Nothing}}, Dict{String,Any}("p" => 1))
+    @test nt == (p = 1, q = nothing)
+
+    # parametric type-param-dependent defaults use the 3-arg path
+    pd = StructUtils.make(IParam{2}, Dict{String,Any}("a" => 5))
+    @test pd.a == 5 && pd.b == (0, 0)
+    @test StructUtils.fieldtable(IParam{2}, st).eligible
 end
