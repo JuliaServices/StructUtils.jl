@@ -90,6 +90,8 @@ struct FieldSpec
     elkind::Int8       # KIND_VECTOR: element kind
     elft::Any          # KIND_VECTOR: element type
     default::Any       # shared boxed default, or NODEFAULT/FRESHEMPTY/THUNKDEFAULT
+    tags::Any          # resolved per-field tag NamedTuple (KIND_CUSTOM passes
+                       # it through the 4-arg make: lift/choosetype/dateformat)
 end
 
 struct FieldTable
@@ -100,6 +102,10 @@ struct FieldTable
     defaultsthunk::Any     # () -> NamedTuple, or nothing
     valsdefaults::Bool     # defaults reference parsed fields: use the 3-arg
                            # fielddefaults(style, T, vals) semantics (JIT only)
+    treesafe::Bool         # own fields free of choosetype tags and abstract
+                           # CUSTOM leaves: those hand the *source* to user
+                           # functions, whose representation formats may not
+                           # change (see interptreesafe for the recursive check)
 end
 
 # raw per-type metadata as registered by the struct macros: plain data, so
@@ -267,7 +273,7 @@ end
 
 function buildtable(@nospecialize(T::Type), style::StructStyle)
     T isa DataType ||
-        return FieldTable(Nothing, FieldSpec[], false, false, nothing, false)
+        return FieldTable(Nothing, FieldSpec[], false, false, nothing, false, true)
     tagkey = fieldtagkey(style)
     snap = @atomic METASTORE.snap
     meta = _rawmeta(snap, T)
@@ -300,7 +306,7 @@ function buildtable(@nospecialize(T::Type), style::StructStyle)
     else
         # unregistered (or overridden) type under JIT: the classic path owns
         # it — exact semantics for manual/stateful metadata overloads
-        return FieldTable(T, FieldSpec[], false, false, nothing, false)
+        return FieldTable(T, FieldSpec[], false, false, nothing, false, true)
     end
     names = getfield(getfield(T, :name), :names)::Core.SimpleVector
     n = fieldcount(T)
@@ -310,6 +316,7 @@ function buildtable(@nospecialize(T::Type), style::StructStyle)
                !(T <: AbstractDict) && !(T <: AbstractArray) && !(T <: AbstractSet) &&
                !(T <: AbstractString) && !(T <: Function) && !(T <: Type)
     anythunk = false
+    treesafe = true
     for i = 1:n
         fn = names[i]::Symbol
         ftags = _fieldtag_nt(tags, fn, tagkey)
@@ -326,6 +333,9 @@ function buildtable(@nospecialize(T::Type), style::StructStyle)
         # lift/choosetype/dateformat tags force the dynamic arm
         if k != KIND_UNSUPPORTED && ftags isa NamedTuple &&
            (haskey(ftags, :lift) || haskey(ftags, :choosetype) || haskey(ftags, :dateformat))
+            # a choosetype function receives the raw source value; formats
+            # that swap source representations must keep the classic path
+            haskey(ftags, :choosetype) && (treesafe = false)
             k = KIND_CUSTOM
         end
         if k == KIND_UNSUPPORTED && !ignored
@@ -334,6 +344,9 @@ function buildtable(@nospecialize(T::Type), style::StructStyle)
             if ft isa DataType && !(ft <: AbstractDict) && !(ft <: AbstractArray) &&
                !(ft <: AbstractSet) && !(ft <: Tuple) && !(ft <: NamedTuple)
                 k = KIND_CUSTOM
+                # abstract leaves may resolve via a type-level @choosetype,
+                # which also receives the raw source value
+                isconcretetype(ft) || (treesafe = false)
             else
                 eligible = false
             end
@@ -361,14 +374,15 @@ function buildtable(@nospecialize(T::Type), style::StructStyle)
         elseif !(rawdef isa NoDefault) && def !== FRESHEMPTY
             def = rawdef
         end
-        specs[i] = FieldSpec(String(nm), nm, fn, k, nullable, missingable, ft, elk, elft, def)
+        specs[i] = FieldSpec(String(nm), nm, fn, k, nullable, missingable, ft, elk, elft, def,
+            ftags isa NamedTuple ? ftags : (;))
     end
     if anythunk
         thunk === nothing && (eligible = false)
     end
     valsdefaults && TRIM_BUILD && (eligible = false)
     return FieldTable(T, specs, eligible, anythunk && !valsdefaults,
-        (anythunk && !valsdefaults) ? thunk : nothing, valsdefaults)
+        (anythunk && !valsdefaults) ? thunk : nothing, valsdefaults, treesafe)
 end
 
 _callthunk(@nospecialize(f)) = try
@@ -564,6 +578,19 @@ function _parse_iso_datetime(s::String, name::String)
     return Dates.DateTime(y, m, d, h, mi, sec, ms)
 end
 
+# the default string lifts for the stdlib date types use these hand-rolled
+# parsers everywhere (not just inside the interpreter): the ISO defaults are
+# what `Date(::String)` accepts anyway, they are faster than the DateFormat
+# machinery, and — decisively — DateFormat's error paths are not
+# trim-verifiable, which poisoned every typed date parse under `--trim`.
+# Custom formats still route through the `dateformat` fieldtag.
+lift(::Type{Dates.Date}, x::AbstractString) = _parse_iso_date(String(x), "Date")
+lift(::Type{Dates.DateTime}, x::AbstractString) = _parse_iso_datetime(String(x), "DateTime")
+function lift(::Type{Dates.Time}, x::AbstractString)
+    h, mi, sec, ms = _parse_iso_timeparts(String(x), 1, "Time")
+    return Dates.Time(h, mi, sec, ms)
+end
+
 # lift an already-materialized tree scalar to the spec's exact type; `v` is
 # never `nothing` here (nulls are handled by the caller)
 function _liftleaf(style::StructStyle, kind::Int8, @nospecialize(ft), @nospecialize(v), name::String)
@@ -681,7 +708,7 @@ function (f::InterpClosure{S})(@nospecialize(k), @nospecialize(v)) where {S}
     i = _findspec(specs, k)
     i == 0 && return unknownfield(f.style, f.tbl.T, k, v)
     sp = @inbounds specs[i]
-    if v === nothing && sp.kind != KIND_ANY
+    if v === nothing && sp.kind != KIND_ANY && sp.kind != KIND_CUSTOM
         if sp.nullable
             f.slots[i] = nothing
         elseif sp.missingable
@@ -730,7 +757,9 @@ function _interp_value(style::StructStyle, sp::FieldSpec, @nospecialize(v))
         if TRIM_BUILD
             _liftfail(k, sp.name)
         else
-            x, _ = make(style, sp.ft, v)
+            # the 4-arg make with the field's resolved tags, so lift/
+            # choosetype/dateformat tags keep their classic semantics
+            x, _ = make(style, sp.ft::Type, v, sp.tags)
             return x
         end
     else

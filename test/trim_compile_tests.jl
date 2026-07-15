@@ -10,6 +10,9 @@ const _JULIAC_ENTRYPOINT_EXPR = "using JuliaC; if isdefined(JuliaC, :main); Juli
 # default load path.
 function _clean_cmd(cmd::Cmd)
     env = Dict{String,String}(k => v for (k, v) in ENV if k != "JULIA_LOAD_PATH")
+    # juliac sessions must not execute precompile workloads: they would bake
+    # JIT-only instances into the image for the verifier to reject
+    env["JULIAC_DISABLE_PRECOMPILE_WORKLOADS"] = "1"
     return setenv(cmd, env)
 end
 
@@ -180,6 +183,7 @@ end
         project_path = _setup_trim_env()
         trim_workloads = [
             ("make_trim_safe.jl", "make_trim_safe"),
+            ("hot_trim_safe.jl", "hot_trim_safe"),
         ]
         for (script_file, output_name) in trim_workloads
             _run_trim_case(project_path, script_file, output_name)

@@ -1297,6 +1297,7 @@ end
 
 include("selectors.jl")
 include("interp.jl")
+include("hot.jl")
 
 """
     StructUtils.@choosetype T func
