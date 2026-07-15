@@ -965,6 +965,15 @@ function make(style::StructStyle, T::Type, source)
     elseif arraylike(style, T)
         return makearray(style, T, source)
     elseif noarg(style, T)
+        # same tier routing as the structlike arm below: @noarg targets have
+        # interpreter tables too, and trim builds must not reach the classic
+        # closures from any arm
+        if TRIM_BUILD
+            _interpsource(source) && return _interp_make(style, T, source)
+            return _hot_make3(style, T, source)
+        else
+            _interpready(style, T, source) && return _interp_make(style, T, source)
+        end
         return makenoarg(style, T, source)
     elseif structlike(style, T)
         # struct targets route by tier (see the architecture note at the top
