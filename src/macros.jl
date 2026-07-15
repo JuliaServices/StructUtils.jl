@@ -113,7 +113,18 @@ function parsefields!(field_exprs::Vector{Any})
     return fields
 end
 
-function parse_struct_def(kind, src, mod, expr)
+# leading `:hot` option: `@kwarg :hot struct ...` opts the type into the
+# fully-specialized make tier + precompile-time compilation via hot hooks
+function _parse_macro_opts(kind::Symbol, args)
+    if length(args) == 1
+        return false, args[1]
+    elseif length(args) == 2 && args[1] isa QuoteNode && args[1].value === :hot
+        return true, args[2]
+    end
+    throw(ArgumentError("@$kind: expected `@$kind [:hot] struct ...`"))
+end
+
+function parse_struct_def(kind, src, mod, expr; hot::Bool=false)
     expr = macroexpand(mod, expr)
     Meta.isexpr(expr, :struct) || throw(ArgumentError("Invalid usage of @$kind macro"))
     # kind is: :noarg, :kwarg, :defaults, :tags
@@ -258,6 +269,17 @@ function parse_struct_def(kind, src, mod, expr)
     push!(ret.args, Expr(:call, GlobalRef(StructUtils, :register_fieldtable!),
         Expr(:parameters, Expr(:kw, :defaults, defs_thunk), Expr(:kw, :tags, tags_expr),
             Expr(:kw, :nonstruct, register_nonstruct), Expr(:kw, :valsdependent, valsdep)), T))
+    if hot
+        kind === :nonstruct && throw(ArgumentError("@nonstruct does not support :hot"))
+        push!(ret.args, :(StructUtils.ishot(::Type{<:$T}) = true))
+        push!(ret.args, :(function StructUtils.make(style::StructUtils.StructStyle, ::Type{S}, source) where {S<:$T}
+            StructUtils._hot_entry(style, S, source)
+        end))
+        push!(ret.args, :(function StructUtils.make(style::StructUtils.StructStyle, ::Type{S}, source, tags) where {S<:$T}
+            StructUtils._hot_entry(style, S, source, tags)
+        end))
+        push!(ret.args, :(StructUtils._hot_precompile!($T)))
+    end
     # Return the struct type for REPL friendliness (like Base.@kwdef)
     push!(ret.args, T)
     return esc(ret)
@@ -419,8 +441,9 @@ function Foo()
 end
 ```
 """
-macro noarg(expr)
-    parse_struct_def(:noarg, __source__, __module__, expr)
+macro noarg(args...)
+    hot, expr = _parse_macro_opts(:noarg, args)
+    parse_struct_def(:noarg, __source__, __module__, expr; hot)
 end
 
 """
@@ -453,8 +476,9 @@ function Foo(; a, b="foo", c=1.0, d=[1, 2, 3])
 end
 ```
 """
-macro kwarg(expr)
-    parse_struct_def(:kwarg, __source__, __module__, expr)
+macro kwarg(args...)
+    hot, expr = _parse_macro_opts(:kwarg, args)
+    parse_struct_def(:kwarg, __source__, __module__, expr; hot)
 end
 
 """
@@ -487,8 +511,9 @@ function Foo(a)
 end
 ```
 """
-macro defaults(expr)
-    parse_struct_def(:defaults, __source__, __module__, expr)
+macro defaults(args...)
+    hot, expr = _parse_macro_opts(:defaults, args)
+    parse_struct_def(:defaults, __source__, __module__, expr; hot)
 end
 
 """
@@ -501,8 +526,9 @@ specified for each field.
 
 $SHARED_MACRO_DOCS
 """
-macro tags(expr)
-    parse_struct_def(:tags, __source__, __module__, expr)
+macro tags(args...)
+    hot, expr = _parse_macro_opts(:tags, args)
+    parse_struct_def(:tags, __source__, __module__, expr; hot)
 end
 
 """
@@ -537,6 +563,7 @@ end
 x = StructUtils.make(MyUnit, "hello")
 ```
 """
-macro nonstruct(expr)
-    parse_struct_def(:nonstruct, __source__, __module__, expr)
+macro nonstruct(args...)
+    hot, expr = _parse_macro_opts(:nonstruct, args)
+    parse_struct_def(:nonstruct, __source__, __module__, expr; hot)
 end
