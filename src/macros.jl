@@ -142,6 +142,7 @@ function parse_struct_def(kind, src, mod, expr)
     push!(ret.args, :($Base.@__doc__ $expr))
     # parse field exprs and sanitize field definitions
     fields = parsefields!(fieldsblock.args)
+    register_nonstruct = kind == :nonstruct
     if kind == :noarg
         ismutable || throw(ArgumentError("@noarg structs must be mutable"))
         if any(f.isconst for f in fields)
@@ -240,6 +241,23 @@ function parse_struct_def(kind, src, mod, expr)
         end
         generate_field_defaults_and_tags!(ret, T, fields, typeparam_names, typeparams)
     end
+    # register tier-0 interpreter metadata: defaults and tags as plain data,
+    # so trimmed binaries (and the interpreter generally) never need per-type
+    # method dispatch to resolve them
+    fields_with_defaults = [f for f in fields if f.default !== none]
+    defs_thunk = isempty(fields_with_defaults) ? :nothing :
+        Expr(:->, Expr(:tuple), _fielddefaults_body_2arg(fields_with_defaults))
+    # a default referencing another field must be computed against *parsed*
+    # values (the 3-arg fielddefaults semantics), not other defaults — those
+    # structs keep the vals-aware construct path
+    allnames = Symbol[f.name for f in fields]
+    valsdep = any(f.default !== none && _references_typeparam(f.default, allnames) for f in fields)
+    tagged = [f for f in fields if f.tags !== none]
+    tags_expr = isempty(tagged) ? :nothing :
+        Expr(:tuple, Expr(:parameters, [:($(f.name) = $(f.tags)) for f in tagged]...))
+    push!(ret.args, Expr(:call, GlobalRef(StructUtils, :register_fieldtable!),
+        Expr(:parameters, Expr(:kw, :defaults, defs_thunk), Expr(:kw, :tags, tags_expr),
+            Expr(:kw, :nonstruct, register_nonstruct), Expr(:kw, :valsdependent, valsdep)), T))
     # Return the struct type for REPL friendliness (like Base.@kwdef)
     push!(ret.args, T)
     return esc(ret)
