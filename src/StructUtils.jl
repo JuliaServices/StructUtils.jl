@@ -986,7 +986,14 @@ function make(style::StructStyle, T::Type, source)
         # arms reachable from tree sources makes them verifier-unresolvable
         # (ineligible types fail loudly inside the interpreter instead).
         if TRIM_BUILD
+            # tree-shaped sources interpret; everything else takes the hot
+            # (fully specialized) descent — the classic makestruct closures
+            # are never verifier-resolvable, so in a trim build every
+            # constprop'd call site must fold into a static path. The :hot
+            # annotation remains a JIT/precompile-time feature; trim
+            # correctness no longer depends on it.
             _interpsource(source) && return _interp_make(style, T, source)
+            return _hot_make3(style, T, source)
         else
             _interpready(style, T, source) && return _interp_make(style, T, source)
         end
