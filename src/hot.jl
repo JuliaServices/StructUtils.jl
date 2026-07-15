@@ -3,11 +3,13 @@
 # `@hot`). Every dispatcher here carries `::Type{T} where T` — the forced
 # per-type specialization PR #62 gated globally behind a preference — but
 # scoped to annotated types, so nobody else pays the compile time. The
-# emitted entry tree-gates first: tree-shaped sources always take the tier-0
-# interpreter (faster at that size, and interpretable in trimmed binaries),
-# while the hot descent owns non-tree sources (format lazy values,
+# emitted entry tree-gates first: eligible tree-shaped sources take the
+# tier-0 interpreter (faster at request sizes, and interpretable in trimmed
+# binaries), while the hot descent owns everything else (format lazy values,
 # NamedTuples, structs) with a statically-resolvable call graph — no
-# preference required for `juliac --trim`.
+# preference required for `juliac --trim`. Under `trim_build` the make
+# dispatcher also routes *unannotated* non-tree structlike targets here; see
+# the architecture note at the top of StructUtils.jl.
 
 """
     StructUtils.ishot(T) -> Bool
@@ -18,14 +20,6 @@ at package-precompile time through the hot-hook registry.
 """
 ishot(@nospecialize(T)) = false
 
-"""
-    StructUtils.interpready(style, T) -> Bool
-
-`true` when the tier-0 interpreter has an eligible field table for `T` under
-`style` — i.e. a tree-shaped `make` will construct through the interpreter.
-"""
-interpready(style::StructStyle, @nospecialize(T::Type)) =
-    T isa DataType && fieldtable(T, style).eligible
 
 # ---------------- hot-hook registry ----------------
 
@@ -84,39 +78,6 @@ end
 
 # ---------------- specialized dispatchers (per-T `where T` throughout) ----------------
 
-# 2-component-union disambiguation with literal component types (a runtime
-# Base.uniontypes loop makes the recursive calls dynamic)
-@generated function _hot_unionmake(style::StructStyle, ::Type{T}, source, tags) where {T}
-    types = Base.uniontypes(T)
-    length(types) == 2 || return :(return nothing)
-    A, B = types
-    return quote
-        a_arr = arraylike(style, $A)
-        b_arr = arraylike(style, $B)
-        if a_arr && !b_arr
-            return arraylike(style, source) ? _hot_field(style, $A, source, tags) : _hot_field(style, $B, source, tags)
-        elseif b_arr && !a_arr
-            return arraylike(style, source) ? _hot_field(style, $B, source, tags) : _hot_field(style, $A, source, tags)
-        end
-        return nothing
-    end
-end
-
-@generated function _hot_unionmake(style::StructStyle, ::Type{T}, source) where {T}
-    types = Base.uniontypes(T)
-    length(types) == 2 || return :(return nothing)
-    A, B = types
-    return quote
-        a_arr = arraylike(style, $A)
-        b_arr = arraylike(style, $B)
-        if a_arr && !b_arr
-            return arraylike(style, source) ? _hot_make3(style, $A, source) : _hot_make3(style, $B, source)
-        elseif b_arr && !a_arr
-            return arraylike(style, source) ? _hot_make3(style, $B, source) : _hot_make3(style, $A, source)
-        end
-        return nothing
-    end
-end
 
 # field-level entry: the 4-arg `make` semantics with a specializing signature
 function _hot_field(style::StructStyle, ::Type{T}, source, tags) where {T}
@@ -124,25 +85,7 @@ function _hot_field(style::StructStyle, ::Type{T}, source, tags) where {T}
         # runtime-chosen types re-enter the generic machinery
         return make(style, tags.choosetype(source), source, _delete(tags, :choosetype))
     end
-    if T !== Any
-        if T >: Missing && T !== Missing
-            if nulllike(style, source)
-                return _hot_field(style, Missing, source, tags)
-            else
-                return _hot_field(style, nonmissingtype(T), source, tags)
-            end
-        elseif T >: Nothing && T !== Nothing
-            if nulllike(style, source)
-                return _hot_field(style, Nothing, source, tags)
-            else
-                return _hot_field(style, Base.nonnothingtype(T), source, tags)
-            end
-        end
-        if T isa Union
-            r = _hot_unionmake(style, T, source, tags)
-            r !== nothing && return r
-        end
-    end
+    @_peel _hot_field tags
     if T <: Tuple || dictlike(style, T) || arraylike(style, T) || noarg(style, T) || structlike(style, T)
         return _hot_make3(style, T, source)
     else
@@ -154,25 +97,7 @@ function _hot_make3(style::StructStyle, ::Type{T}, source) where {T}
     if abstractcollectionpassthrough(style, T, source)
         return source, defaultstate(style)
     end
-    if T !== Any
-        if T >: Missing && T !== Missing
-            if nulllike(style, source)
-                return _hot_make3(style, Missing, source)
-            else
-                return _hot_make3(style, nonmissingtype(T), source)
-            end
-        elseif T >: Nothing && T !== Nothing
-            if nulllike(style, source)
-                return _hot_make3(style, Nothing, source)
-            else
-                return _hot_make3(style, Base.nonnothingtype(T), source)
-            end
-        end
-        if T isa Union
-            r = _hot_unionmake(style, T, source)
-            r !== nothing && return r
-        end
-    end
+    @_peel _hot_make3
     if T <: Tuple
         # tuple targets reuse the existing generated machinery
         return maketuple(style, T, source)
@@ -339,49 +264,13 @@ hot-hook registry. Optional sample strings are handed to format hooks (e.g.
 JSON parses each sample against `T` during precompilation).
 """
 macro hot(T, samples...)
-    esc(quote
-        StructUtils.ishot(::Type{<:$T}) = true
-        function StructUtils.make(style::StructUtils.StructStyle, ::Type{S}, source) where {S<:$T}
-            StructUtils._hot_entry(style, S, source)
-        end
-        function StructUtils.make(style::StructUtils.StructStyle, ::Type{S}, source, tags) where {S<:$T}
-            StructUtils._hot_entry(style, S, source, tags)
-        end
+    ex = Expr(:block,
         # reflection-only field table so eligible tree sources still take the
-        # interpreter (types defined via the struct macros register richer
-        # metadata at their own definition site)
-        StructUtils.register_fieldtable!($T)
-        StructUtils._hot_precompile!($T, ($(samples...),))
-        $T
-    end)
+        # interpreter (macro-defined types register richer metadata at their
+        # own definition site)
+        :(StructUtils.register_fieldtable!($T)),
+        _hot_exprs(T, samples...)...,
+        T)
+    return esc(ex)
 end
 
-"""
-    StructUtils.interptreesafe(style, T) -> Bool
-
-`true` when `T`'s field table — including nested struct and vector-element
-tables — contains no choosetype-tagged fields or abstract CUSTOM leaves.
-Those receive the raw source value in user functions, so formats that
-materialize an alternate tree representation for the interpreter (e.g. JSON
-parsing to `Object` instead of handing out lazy values) must keep such types
-on their classic path.
-"""
-interptreesafe(style::StructStyle, @nospecialize(T::Type)) =
-    _treesafe(style, T, Base.IdSet{Any}())
-
-function _treesafe(style::StructStyle, @nospecialize(T), seen::Base.IdSet{Any})::Bool
-    T in seen && return true
-    push!(seen, T)
-    T isa DataType || return true
-    tbl = fieldtable(T, style)
-    tbl.eligible || return true # routed classic anyway
-    tbl.treesafe || return false
-    for sp in tbl.specs
-        if sp.kind == KIND_STRUCT
-            _treesafe(style, sp.ft, seen) || return false
-        elseif sp.kind == KIND_VECTOR && sp.elkind == KIND_STRUCT
-            _treesafe(style, sp.elft, seen) || return false
-        end
-    end
-    return true
-end

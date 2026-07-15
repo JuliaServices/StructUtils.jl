@@ -14,6 +14,29 @@ export @noarg, @defaults, @tags, @kwarg, @nonstruct, Selectors
 # of falling back to dynamic dispatch that could not run anyway.
 const TRIM_BUILD = @load_preference("trim_build", false)::Bool
 
+# ── how `make` is organized ─────────────────────────────────────────────────
+# Three construction mechanisms share one public `make` surface; dispatch
+# picks between them, never a flag:
+#
+#   classic  (this file)   per-target-type closures driven by `applyeach`;
+#                          serves non-tree sources (NamedTuples, structs,
+#                          Tables rows) in JIT sessions. Compiles per target
+#                          type; not verifier-resolvable, so trim builds
+#                          never route here.
+#   tier-0   (interp.jl)   a non-specializing field-table interpreter for
+#                          tree-shaped sources (AbstractDict, Vector{<:Pair});
+#                          near-zero per-type compile cost, trim-verifiable
+#                          under the `trim_build` preference.
+#   hot      (hot.jl)      fully-specialized dispatchers (`::Type{T} where T`
+#                          everywhere), reachable via methods the struct
+#                          macros' `:hot` option emits — compiled into the
+#                          *defining package's* image through the hot-hook
+#                          registry — and, under `trim_build`, as the routing
+#                          target for every non-tree structlike make.
+#
+# The routing lives in the structlike arm of the 3-arg `make` below.
+# ────────────────────────────────────────────────────────────────────────────
+
 """
     StructUtils.StructStyle
 
@@ -873,30 +896,55 @@ end
 @inline abstractcollectionpassthrough(style::StructStyle, ::Type{T}, source) where {T} =
     isabstracttype(T) && source isa T && (dictlike(style, T) || arraylike(style, T))
 
+# two-component union disambiguation (exactly one arraylike member wins by
+# source shape) through the Union's builtin a/b fields: no runtime
+# `Base.uniontypes` vector, no generated expansion, and everything folds when
+# the target type is constant. Three-or-more components (a nested Union in
+# either slot) return `nothing` and the caller falls through.
+@inline function _union2(style::StructStyle, @nospecialize(T), source, recurse::R) where {R}
+    a = getfield(T, :a)
+    b = getfield(T, :b)
+    (a isa Union || b isa Union) && return nothing
+    a_arr = arraylike(style, a)
+    b_arr = arraylike(style, b)
+    if a_arr && !b_arr
+        return arraylike(style, source) ? recurse(a) : recurse(b)
+    elseif b_arr && !a_arr
+        return arraylike(style, source) ? recurse(b) : recurse(a)
+    end
+    return nothing
+end
+
+# shared Missing/Nothing/2-union peel prologue for the four make dispatchers
+# (classic and hot, 3- and 4-arg): `recurse` re-enters with the peeled type,
+# `extra...` carries trailing arguments (the tags NamedTuple for 4-arg forms).
+# Expects `style`, `T`, and `source` in scope; falls through when no peel
+# applies.
+macro _peel(recurse, extra...)
+    esc(quote
+        if T !== Any
+            if T >: Missing && T !== Missing
+                return nulllike(style, source) ?
+                       $recurse(style, Missing, source, $(extra...)) :
+                       $recurse(style, nonmissingtype(T), source, $(extra...))
+            elseif T >: Nothing && T !== Nothing
+                return nulllike(style, source) ?
+                       $recurse(style, Nothing, source, $(extra...)) :
+                       $recurse(style, Base.nonnothingtype(T), source, $(extra...))
+            end
+            if T isa Union
+                r = _union2(style, T, source, U -> $recurse(style, U, source, $(extra...)))
+                r !== nothing && return r
+            end
+        end
+    end)
+end
+
 function make(style::StructStyle, T::Type, source, tags)
     if haskey(tags, :choosetype)
         return make(style, tags.choosetype(source), source, _delete(tags, :choosetype))
     end
-    if T !== Any
-        if T >: Missing && T !== Missing
-            if nulllike(style, source)
-                return make(style, Missing, source, tags)
-            else
-                return make(style, nonmissingtype(T), source, tags)
-            end
-        elseif T >: Nothing && T !== Nothing
-            if nulllike(style, source)
-                return make(style, Nothing, source, tags)
-            else
-                return make(style, Base.nonnothingtype(T), source, tags)
-            end
-        end
-        # see _unionmake: unrolled two-component union disambiguation
-        if T isa Union
-            r = _unionmake(style, T, source, tags)
-            r !== nothing && return r
-        end
-    end
+    @_peel make tags
     if T <: Tuple || dictlike(style, T) || arraylike(style, T) || noarg(style, T) || structlike(style, T)
         return make(style, T, source)
     else
@@ -904,71 +952,12 @@ function make(style::StructStyle, T::Type, source, tags)
     end
 end
 
-# unrolls the arraylike-vs-scalar union disambiguation with literal component
-# types: `Base.uniontypes` builds a runtime Vector{Any}, which makes the
-# recursive `make` calls dynamic even when the target type constant-folds.
-# The rule can only ever match two-component unions ("exactly one arraylike
-# and one non-arraylike"), so anything else returns `nothing` (ambiguous) and
-# the caller falls through. The `arraylike` trait calls stay in the emitted
-# code — they are style-dependent — but fold at inference given the literal
-# types.
-@generated function _unionmake(style::StructStyle, ::Type{T}, source, tags) where {T}
-    types = Base.uniontypes(T)
-    length(types) == 2 || return :(return nothing)
-    A, B = types
-    return quote
-        a_arr = arraylike(style, $A)
-        b_arr = arraylike(style, $B)
-        if a_arr && !b_arr
-            return arraylike(style, source) ? make(style, $A, source, tags) : make(style, $B, source, tags)
-        elseif b_arr && !a_arr
-            return arraylike(style, source) ? make(style, $B, source, tags) : make(style, $A, source, tags)
-        end
-        return nothing
-    end
-end
-
-@generated function _unionmake(style::StructStyle, ::Type{T}, source) where {T}
-    types = Base.uniontypes(T)
-    length(types) == 2 || return :(return nothing)
-    A, B = types
-    return quote
-        a_arr = arraylike(style, $A)
-        b_arr = arraylike(style, $B)
-        if a_arr && !b_arr
-            return arraylike(style, source) ? make(style, $A, source) : make(style, $B, source)
-        elseif b_arr && !a_arr
-            return arraylike(style, source) ? make(style, $B, source) : make(style, $A, source)
-        end
-        return nothing
-    end
-end
 
 function make(style::StructStyle, T::Type, source)
     if abstractcollectionpassthrough(style, T, source)
         return source, defaultstate(style)
     end
-    # start with some hard-coded Union cases
-    if T !== Any
-        if T >: Missing && T !== Missing
-            if nulllike(style, source)
-                return make(style, Missing, source)
-            else
-                return make(style, nonmissingtype(T), source)
-            end
-        elseif T >: Nothing && T !== Nothing
-            if nulllike(style, source)
-                return make(style, Nothing, source)
-            else
-                return make(style, Base.nonnothingtype(T), source)
-            end
-        end
-        # see _unionmake: unrolled two-component union disambiguation
-        if T isa Union
-            r = _unionmake(style, T, source)
-            r !== nothing && return r
-        end
-    end
+    @_peel make
     if T <: Tuple
         return maketuple(style, T, source)
     elseif dictlike(style, T)
@@ -978,20 +967,14 @@ function make(style::StructStyle, T::Type, source)
     elseif noarg(style, T)
         return makenoarg(style, T, source)
     elseif structlike(style, T)
-        # tier-0 interpreter: tree-shaped sources with an eligible field
-        # table construct through the non-specializing engine (one compiled
-        # instance per style/source shape, never per target type). In trim
-        # builds the routing is unconditional for tree sources: the runtime
-        # eligibility lookup can't constant-fold, and leaving the classic
-        # arms reachable from tree sources makes them verifier-unresolvable
-        # (ineligible types fail loudly inside the interpreter instead).
+        # struct targets route by tier (see the architecture note at the top
+        # of this file): eligible tree-shaped sources construct through the
+        # tier-0 interpreter; under `trim_build` everything else takes the
+        # fully-specialized hot descent, because the classic closures below
+        # are never verifier-resolvable and every constprop'd call site must
+        # fold into a static path (`:hot` stays a JIT/precompile-time
+        # feature — trim correctness does not depend on annotation).
         if TRIM_BUILD
-            # tree-shaped sources interpret; everything else takes the hot
-            # (fully specialized) descent — the classic makestruct closures
-            # are never verifier-resolvable, so in a trim build every
-            # constprop'd call site must fold into a static path. The :hot
-            # annotation remains a JIT/precompile-time feature; trim
-            # correctness no longer depends on it.
             _interpsource(source) && return _interp_make(style, T, source)
             return _hot_make3(style, T, source)
         else

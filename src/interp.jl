@@ -140,7 +140,8 @@ const METASTORE = MetaStore(MetaSnap(IdDict{Any,RawMeta}(),
 const META_LOCK = ReentrantLock()
 
 """
-    StructUtils.register_fieldtable!(T; defaults=nothing, tags=nothing)
+    StructUtils.register_fieldtable!(T; defaults=nothing, tags=nothing,
+                                     nonstruct=false, valsdependent=false)
 
 Register tier-0 interpreter metadata for struct type `T`: `defaults` is a
 zero-arg function returning a `NamedTuple` of field defaults (evaluated in
@@ -469,9 +470,16 @@ end
 @noinline _missingfield(name::String, T::DataType) =
     throw(ArgumentError(string("missing required field '", name, "' constructing ", String(nameof(T)))))
 
+const KINDNAMES = ("String", "Int64", "Int32", "Int16", "Int8", "Int128",
+    "UInt64", "UInt32", "UInt16", "UInt8", "UInt128", "Float64", "Float32",
+    "Float16", "Bool", "Date", "DateTime", "Time", "UUID", "Symbol", "Char",
+    "Any", "struct", "vector", "custom")
+
+_kindname(kind::Int8) = 1 <= kind <= length(KINDNAMES) ? KINDNAMES[kind] : "unsupported"
+
 @noinline _liftfail(kind::Int8, name::String) =
-    throw(ArgumentError(string("tier-0 interpreter cannot lift value for field '", name,
-        "' (kind ", Int(kind), "); define the struct with `:hot` or register a supported kind")))
+    throw(ArgumentError(string("tier-0 interpreter cannot produce a ", _kindname(kind),
+        " value for field '", name, "'; annotate the struct `:hot` for the specialized path")))
 
 function _construct_interp(style::StructStyle, tbl::FieldTable, slots::Vector{Any})
     specs = tbl.specs
@@ -864,4 +872,43 @@ function _interpready(style::StructStyle, @nospecialize(T::Type), @nospecialize(
     T isa DataType || return false
     _interpsource(source) || return false
     return fieldtable(T, style).eligible
+end
+
+"""
+    StructUtils.interpready(style, T) -> Bool
+
+`true` when the tier-0 interpreter has an eligible field table for `T` under
+`style` — i.e. a tree-shaped `make` will construct through the interpreter.
+"""
+interpready(style::StructStyle, @nospecialize(T::Type)) =
+    T isa DataType && fieldtable(T, style).eligible
+
+"""
+    StructUtils.interptreesafe(style, T) -> Bool
+
+`true` when `T`'s field table — including nested struct and vector-element
+tables — contains no choosetype-tagged fields or abstract CUSTOM leaves.
+Those receive the raw source value in user functions, so formats that
+materialize an alternate tree representation for the interpreter (e.g. JSON
+parsing to `Object` instead of handing out lazy values) must keep such types
+on their classic path.
+"""
+interptreesafe(style::StructStyle, @nospecialize(T::Type)) =
+    _treesafe(style, T, Base.IdSet{Any}())
+
+function _treesafe(style::StructStyle, @nospecialize(T), seen::Base.IdSet{Any})::Bool
+    T in seen && return true
+    push!(seen, T)
+    T isa DataType || return true
+    tbl = fieldtable(T, style)
+    tbl.eligible || return true # routed classic anyway
+    tbl.treesafe || return false
+    for sp in tbl.specs
+        if sp.kind == KIND_STRUCT
+            _treesafe(style, sp.ft, seen) || return false
+        elseif sp.kind == KIND_VECTOR && sp.elkind == KIND_STRUCT
+            _treesafe(style, sp.elft, seen) || return false
+        end
+    end
+    return true
 end

@@ -113,6 +113,21 @@ function parsefields!(field_exprs::Vector{Any})
     return fields
 end
 
+# the expressions the `:hot` option appends after a struct definition;
+# shared with the standalone `StructUtils.@hot`
+function _hot_exprs(T, samples...)
+    return Any[
+        :(StructUtils.ishot(::Type{<:$T}) = true),
+        :(function StructUtils.make(style::StructUtils.StructStyle, ::Type{S}, source) where {S<:$T}
+            StructUtils._hot_entry(style, S, source)
+        end),
+        :(function StructUtils.make(style::StructUtils.StructStyle, ::Type{S}, source, tags) where {S<:$T}
+            StructUtils._hot_entry(style, S, source, tags)
+        end),
+        :(StructUtils._hot_precompile!($T, ($(samples...),))),
+    ]
+end
+
 # leading `:hot` option: `@kwarg :hot struct ...` opts the type into the
 # fully-specialized make tier + precompile-time compilation via hot hooks
 function _parse_macro_opts(kind::Symbol, args)
@@ -271,14 +286,7 @@ function parse_struct_def(kind, src, mod, expr; hot::Bool=false)
             Expr(:kw, :nonstruct, register_nonstruct), Expr(:kw, :valsdependent, valsdep)), T))
     if hot
         kind === :nonstruct && throw(ArgumentError("@nonstruct does not support :hot"))
-        push!(ret.args, :(StructUtils.ishot(::Type{<:$T}) = true))
-        push!(ret.args, :(function StructUtils.make(style::StructUtils.StructStyle, ::Type{S}, source) where {S<:$T}
-            StructUtils._hot_entry(style, S, source)
-        end))
-        push!(ret.args, :(function StructUtils.make(style::StructUtils.StructStyle, ::Type{S}, source, tags) where {S<:$T}
-            StructUtils._hot_entry(style, S, source, tags)
-        end))
-        push!(ret.args, :(StructUtils._hot_precompile!($T)))
+        append!(ret.args, _hot_exprs(T))
     end
     # Return the struct type for REPL friendliness (like Base.@kwdef)
     push!(ret.args, T)
