@@ -1,8 +1,18 @@
 module StructUtils
 
 using Dates, UUIDs
+using Preferences, PrecompileTools
 
 export @noarg, @defaults, @tags, @kwarg, @nonstruct, Selectors
+
+# Compile-time preference for `juliac --trim` builds: prunes the tier-0
+# interpreter's JIT-only arms (per-type metadata method consultation, dynamic
+# lift fallbacks, defaults-thunk re-evaluation) so the interpreter's call
+# graph is fully verifier-resolvable. This describes the build environment —
+# a no-JIT binary — not a behavior tier: parse results are identical, and
+# shapes outside the closed kind universe fail loudly at parse time instead
+# of falling back to dynamic dispatch that could not run anyway.
+const TRIM_BUILD = @load_preference("trim_build", false)::Bool
 
 """
     StructUtils.StructStyle
@@ -828,7 +838,9 @@ function make end
 
 function make(::Type{T}, source, style::StructStyle=DefaultStyle()) where {T}
     x, _ = make(style, T, source)
-    return x
+    # the assert makes results well-typed for callers even when the inner
+    # make ran through the non-specializing tier-0 interpreter
+    return x::T
 end
 
 if isdefined(Base, :delete) && applicable(Base.delete, (a=1,), :a)
@@ -965,6 +977,18 @@ function make(style::StructStyle, T::Type, source)
     elseif noarg(style, T)
         return makenoarg(style, T, source)
     elseif structlike(style, T)
+        # tier-0 interpreter: tree-shaped sources with an eligible field
+        # table construct through the non-specializing engine (one compiled
+        # instance per style/source shape, never per target type). In trim
+        # builds the routing is unconditional for tree sources: the runtime
+        # eligibility lookup can't constant-fold, and leaving the classic
+        # arms reachable from tree sources makes them verifier-unresolvable
+        # (ineligible types fail loudly inside the interpreter instead).
+        if TRIM_BUILD
+            _interpsource(source) && return _interp_make(style, T, source)
+        else
+            _interpready(style, T, source) && return _interp_make(style, T, source)
+        end
         return makestruct(style, T, source)
     else
         return lift(style, T, source)
@@ -1272,6 +1296,7 @@ function reset!(x::T; style::StructStyle=DefaultStyle()) where {T}
 end
 
 include("selectors.jl")
+include("interp.jl")
 
 """
     StructUtils.@choosetype T func
@@ -1336,6 +1361,21 @@ macro choosetype(style, T, ex)
             StructUtils.make(st, func(source), source)
         end
     end)
+end
+
+# exercises the tier-0 interpreter so its engine instances (per style/source
+# shape) live in this package's image; first typed `make` of any user struct
+# then pays table-build only
+@kwarg struct _InterpWorkload
+    a::Int = 0
+    b::Union{String,Nothing} = nothing
+    c::Vector{Float64} = Float64[]
+end
+
+@compile_workload begin
+    make(_InterpWorkload, Dict{String,Any}("a" => 1, "b" => "x", "c" => Any[1.0]))
+    make(_InterpWorkload, Dict{Symbol,Any}(:a => 2))
+    make(_InterpWorkload, ["a" => 3])
 end
 
 end
