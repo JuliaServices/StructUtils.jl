@@ -44,6 +44,7 @@ end
 include(joinpath(dirname(pathof(StructUtils)), "../test/macros.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/struct.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/selectors.jl"))
+include(joinpath(dirname(pathof(StructUtils)), "../test/interp.jl"))
 
 @testset "StructUtils" begin
 

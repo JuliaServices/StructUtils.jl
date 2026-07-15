@@ -41,9 +41,9 @@ function run_make_trim_sample()::Nothing
     a.a == 1 || error("TrimA.a")
     a.d == 4 || error("TrimA.d")
 
-    # 2. Plain struct from Dict{Symbol,Int} (homogeneous value type)
-    a2 = StructUtils.make(TrimA, Dict{Symbol,Int}(:a => 1, :b => 2, :c => 3, :d => 4))
-    a2.a == 1 || error("TrimA Dict")
+    # 2. Plain struct from Dict{Symbol,Int}: tree-shaped sources route
+    # through the tier-0 interpreter, whose no-JIT graph requires the
+    # trim_build preference — exercised in interp_trim_safe.jl instead
 
     # 3. Struct with defaults — all provided
     b1 = StructUtils.make(TrimB, (a=1, b=2, c=3, d=4))
