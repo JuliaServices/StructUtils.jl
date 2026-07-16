@@ -615,6 +615,35 @@ catch
     false
 end
 
+# per-type memo of which FIELDS carry their own make methods, for the hot
+# closures (computed in the runtime world at first use, so hooks defined any
+# time before a type's first parse are honored — a generated function's
+# frozen world cannot see them). JIT-only: trim builds never consult it.
+mutable struct _CustomFieldsMemo
+    @atomic table::Dict{Type,Any} # UnionAll targets key here too (#54)
+end
+const _CUSTOM_FIELDS = _CustomFieldsMemo(Dict{Type,Any}())
+const _CUSTOM_FIELDS_LOCK = ReentrantLock()
+
+function _custom_make_fields(::Type{T}) where {T}
+    tbl = @atomic _CUSTOM_FIELDS.table
+    r = get(tbl, T, nothing)
+    r === nothing || return r::NTuple{fieldcount(T),Bool}
+    v = ntuple(i -> _has_custom_make(fieldtype(T, i)), fieldcount(T))
+    lock(_CUSTOM_FIELDS_LOCK)
+    try
+        old = @atomic _CUSTOM_FIELDS.table
+        if !haskey(old, T)
+            new = copy(old)
+            new[T] = v
+            @atomic _CUSTOM_FIELDS.table = new
+        end
+    finally
+        unlock(_CUSTOM_FIELDS_LOCK)
+    end
+    return v
+end
+
 _live_pertags(style::StructStyle, @nospecialize(T), fn::Symbol) = try
     fieldtags(style, T, fn)
 catch

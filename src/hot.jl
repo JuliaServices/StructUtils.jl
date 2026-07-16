@@ -120,21 +120,30 @@ end
 
 # ---------------- specialized closures ----------------
 
-struct HotStructClosure{T,A,S,FS,FSS,FT}
+struct HotStructClosure{T,A,S,FS,FSS,FT,CMF}
     vals::A # Memory{Any} for structs, the instance for noarg mutables
     style::S
     fsyms::FS
     fstrs::FSS
     ftags::FT
+    cmf::CMF # per-field: the type carries its own make methods (JIT only)
 end
 
 HotStructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FSS} =
     (ftags = _fieldtagtuple(style, T, fsyms);
-     HotStructClosure{T,A,S,FS,FSS,typeof(ftags)}(vals, style, fsyms, fstrs, ftags))
+     cmf = TRIM_BUILD ? nothing : _custom_make_fields(T);
+     HotStructClosure{T,A,S,FS,FSS,typeof(ftags),typeof(cmf)}(vals, style, fsyms, fstrs, ftags, cmf))
 
 # literal field indices and field types: the runtime-`i` closure form makes
 # `fieldtype(T, i)` abstract, funneling every recursive call through the
-# single generic instance — unresolvable under --trim (PR #62's lesson)
+# single generic instance — unresolvable under --trim (PR #62's lesson).
+# Under JIT, fields whose type carries its OWN `make` methods (raw-capture
+# types like JSON's JSONText, @choosetype-emitted union overrides) dispatch
+# through the 4-arg `make` so those hooks fire before any union peel — the
+# classic closures' behavior. The verdict lives on the closure (f.cmf,
+# memoized per type in the runtime world — a generator's frozen world could
+# never see late-defined hooks). Trim builds emit the plain hot field: the
+# runtime methods() reflection behind the verdict is not verifier-safe.
 @generated function _hot_findfield(::Type{T}, k, v, f) where {T}
     ex = Expr(:block)
     push!(ex.args, :(Base.@_inline_meta))
@@ -145,7 +154,9 @@ HotStructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FS
                 let fn = f.fsyms[$i], ftags = f.ftags[$i]
                     field = get(ftags, :name, fn)
                     if keyeq(k, field) || keyeq(k, fn)
-                        symval, symst = _hot_field(f.style, $ft, v, ftags)
+                        symval, symst = TRIM_BUILD ? _hot_field(f.style, $ft, v, ftags) :
+                            (f.cmf[$i] ? _make_override(f.style, $ft, v, ftags) :
+                                         _hot_field(f.style, $ft, v, ftags))
                         setval!(f.vals, symval, $i)
                         return symst
                     end
@@ -153,7 +164,9 @@ HotStructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FS
             elseif typeof(k) == Int
                 if k == $i
                     let ftags = f.ftags[$i]
-                        intval, intst = _hot_field(f.style, $ft, v, ftags)
+                        intval, intst = TRIM_BUILD ? _hot_field(f.style, $ft, v, ftags) :
+                            (f.cmf[$i] ? _make_override(f.style, $ft, v, ftags) :
+                                         _hot_field(f.style, $ft, v, ftags))
                         setval!(f.vals, intval, $i)
                         return intst
                     end
@@ -162,7 +175,9 @@ HotStructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FS
                 let fstr = f.fstrs[$i], ftags = f.ftags[$i]
                     field = get(ftags, :name, fstr)
                     if keyeq(k, field)
-                        strval, strst = _hot_field(f.style, $ft, v, ftags)
+                        strval, strst = TRIM_BUILD ? _hot_field(f.style, $ft, v, ftags) :
+                            (f.cmf[$i] ? _make_override(f.style, $ft, v, ftags) :
+                                         _hot_field(f.style, $ft, v, ftags))
                         setval!(f.vals, strval, $i)
                         return strst
                     end
@@ -174,7 +189,15 @@ HotStructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FS
     return ex
 end
 
-(f::HotStructClosure{T,A,S,FS,FSS,FT})(k, v) where {T,A,S,FS,FSS,FT} = _hot_findfield(T, k, v, f)
+# inference barrier for the custom-make field arm: called with a CONST field
+# type from the generated closure, a raw `make` invocation invites the
+# constprop/irinterp spiral through the recursive make family (the
+# interpsource lesson); the widened shared instance dispatches at runtime,
+# where the user's override wins by ordinary specificity
+Base.@nospecializeinfer @noinline _make_override(style::StructStyle, @nospecialize(T::Type), @nospecialize(source), @nospecialize(tags)) =
+    make(style, T, source, tags)
+
+(f::HotStructClosure{T,A,S,FS,FSS,FT,CMF})(k, v) where {T,A,S,FS,FSS,FT,CMF} = _hot_findfield(T, k, v, f)
 
 struct HotArrayClosure{T,S}
     arr::T
