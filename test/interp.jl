@@ -1,7 +1,7 @@
 using Test, Dates, UUIDs, StructUtils
 
 # tier-0 interpreter unit tests: table resolution, closed-kind lifting,
-# defaults policies, and routing between the interpreter and the classic path
+# defaults policies, and full-coverage eligibility of the interpreter
 
 struct ITagStyle <: StructUtils.StructStyle end
 StructUtils.fieldtagkey(::ITagStyle) = :itag
@@ -132,21 +132,22 @@ const IEVENT_SRC = Dict{String,Any}(
         @test_throws ArgumentError StructUtils.make(ITier, Dict{String,Any}("amount" => 1))
     end
 
-    @testset "routing to the classic path" begin
-        # unregistered plain struct: classic path, still works from a Dict
+    @testset "full interpreter coverage" begin
+        # unregistered plain struct: interpreter-handled from a Dict
         @test StructUtils.make(IPlain, Dict("x" => 1, "y" => "z")) == IPlain(1, "z")
-        @test !StructUtils.fieldtable(IPlain, StructUtils.DefaultStyle()).eligible
-        # manual fielddefaults overload (no macro): classic path honors it
+        @test StructUtils.fieldtable(IPlain, StructUtils.DefaultStyle()).eligible
+        # manual fielddefaults overload (no macro): volatile table honors it
         @test StructUtils.make(IManual, Dict{String,Any}()).m == 42
-        @test !StructUtils.fieldtable(IManual, StructUtils.DefaultStyle()).eligible
-        # stateful per-style fieldtags: classic path, called once per make
+        @test StructUtils.fieldtable(IManual, StructUtils.DefaultStyle()).eligible
+        # stateful per-style fieldtags: volatile table rebuilds per make so
+        # the hook keeps its call-per-make semantics
         cst = ICountStyle(0)
         StructUtils.make(cst, ICounted, Dict("c" => 1))
         StructUtils.make(cst, ICounted, Dict("c" => 2))
         @test cst.calls >= 2
-        @test !StructUtils.fieldtable(ICounted, cst).eligible
-        # tuple alias name tags: interpreter-handled (alias match candidates
-        # in the field spec), both aliases match
+        @test StructUtils.fieldtable(ICounted, cst).volatile
+        # tuple alias name tags: alias match candidates in the field spec,
+        # both aliases match
         @test StructUtils.make(IAliased, Dict("value" => 7)).v == 7
         @test StructUtils.make(IAliased, Dict("v" => 8)).v == 8
         @test StructUtils.fieldtable(IAliased, StructUtils.DefaultStyle()).eligible
@@ -168,7 +169,7 @@ const IEVENT_SRC = Dict{String,Any}(
     end
 end
 
-# expanded interpreter coverage: shapes that previously routed classic
+# expanded interpreter coverage: shapes beyond plain field structs
 @kwarg struct IWide
     nv::Vector{Union{Int,Nothing}} = Union{Int,Nothing}[]
     mv::Vector{Union{String,Missing}} = Union{String,Missing}[]

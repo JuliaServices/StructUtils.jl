@@ -180,7 +180,14 @@ end
         println("[trim] skip prerelease Julia: trim verifier behavior is not stable yet")
         @test true
     else
+        # every trimmed app sets the trim_build preference — an app-level
+        # environment fact (one line of LocalPreferences, no per-type
+        # annotations): it prunes the make family's JIT-only arms, which is
+        # what keeps the static call graph verifier-resolvable now that the
+        # classic per-type closures are gone
         project_path = _setup_trim_env()
+        write(joinpath(project_path, "LocalPreferences.toml"),
+            "[StructUtils]\ntrim_build = true\n")
         trim_workloads = [
             ("make_trim_safe.jl", "make_trim_safe"),
             ("hot_trim_safe.jl", "hot_trim_safe"),
@@ -188,9 +195,8 @@ end
         for (script_file, output_name) in trim_workloads
             _run_trim_case(project_path, script_file, output_name)
         end
-        # tier-0 interpreter case: runs in its own env because the
-        # trim_build preference (which prunes the interpreter's JIT-only
-        # arms) keys StructUtils' precompile cache
+        # tier-0 interpreter case in a second fresh env: exercises a clean
+        # precompile of the preference-keyed package image
         interp_project = _setup_trim_env()
         write(joinpath(interp_project, "LocalPreferences.toml"),
             "[StructUtils]\ntrim_build = true\n")

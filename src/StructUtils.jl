@@ -959,37 +959,50 @@ function make(style::StructStyle, T::Type, source)
     end
     @_peel make
     if T <: Tuple
+        if !TRIM_BUILD
+            r = _interp_root(style, T, source)
+            r !== nothing && return r
+        end
         return maketuple(style, T, source)
     elseif dictlike(style, T)
+        if !TRIM_BUILD
+            r = _interp_root(style, T, source)
+            r !== nothing && return r
+        end
         return makedict(style, T, source)
     elseif arraylike(style, T)
+        if !TRIM_BUILD && !fixedsizearray(style, T)
+            r = _interp_root(style, T, source)
+            r !== nothing && return r
+        end
         return makearray(style, T, source)
     elseif noarg(style, T)
-        # same tier routing as the structlike arm below: @noarg targets have
-        # interpreter tables too, and trim builds must not reach the classic
-        # closures from any arm
+        # same tier routing as the structlike arm below
         if TRIM_BUILD
             _interpsource(source) && return _interp_make(style, T, source)
-            return _hot_make3(style, T, source)
         else
-            _interpready(style, T, source) && return _interp_make(style, T, source)
+            tbl = _interptable(style, T, source)
+            tbl !== nothing && return _interp_make(style, tbl, source)
         end
-        return makenoarg(style, T, source)
+        return _hot_make3(style, T, source)
     elseif structlike(style, T)
         # struct targets route by tier (see the architecture note at the top
         # of this file): eligible tree-shaped sources construct through the
-        # tier-0 interpreter; under `trim_build` everything else takes the
-        # fully-specialized hot descent, because the classic closures below
-        # are never verifier-resolvable and every constprop'd call site must
-        # fold into a static path (`:hot` stays a JIT/precompile-time
-        # feature — trim correctness does not depend on annotation).
+        # tier-0 interpreter — one engine instance per style, no per-type
+        # compile; everything else (lazy format sources, Tables.jl-style row
+        # sources, ineligible tables) takes the fully-specialized hot
+        # descent. The JIT gate stays a RUNTIME verdict (`_interpready`'s
+        # table lookup cannot const-fold): letting the source trait fold at
+        # a call site both invites a constprop spiral through the recursive
+        # make family and prunes arms the no-preference trim verification
+        # relies on seeing with narrow types.
         if TRIM_BUILD
             _interpsource(source) && return _interp_make(style, T, source)
-            return _hot_make3(style, T, source)
         else
-            _interpready(style, T, source) && return _interp_make(style, T, source)
+            tbl = _interptable(style, T, source)
+            tbl !== nothing && return _interp_make(style, tbl, source)
         end
-        return makestruct(style, T, source)
+        return _hot_make3(style, T, source)
     else
         return lift(style, T, source)
     end
@@ -1139,20 +1152,6 @@ end
     :($(Tuple(fieldname(T, i) for i in 1:fieldcount(T))))
 end
 
-struct StructClosure{T,A,S,FS,FSS,FT}
-    vals::A # Memory{Any} for structs, T for mutable structs
-    style::S
-    fsyms::FS
-    fstrs::FSS
-    ftags::FT
-end
-
-StructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FSS} =
-    StructClosure{T}(vals, style, fsyms, fstrs, _fieldtagtuple(style, T, fsyms))
-
-StructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS, ftags::FT) where {T,A,S,FS,FSS,FT} =
-    StructClosure{T,A,S,FS,FSS,FT}(vals, style, fsyms, fstrs, ftags)
-
 if VERSION < v"1.11"
     setval!(vals::Vector{Any}, x, i) = @inbounds vals[i] = x
 else
@@ -1160,50 +1159,6 @@ else
 end
 
 setval!(vals::T, x, i) where {T} = _setfield!(vals, i, x)
-
-function findfield(::Type{T}, k, v, f) where {T}
-    st = _foreach(T) do i
-        if typeof(k) == Symbol
-            fn = f.fsyms[i]
-            ftags = f.ftags[i]
-            field = get(ftags, :name, fn)
-            if keyeq(k, field) || keyeq(k, fn)
-                symval, symst = make(f.style, fieldtype(T, i), v, ftags)
-                setval!(f.vals, symval, i)
-                return EarlyReturn(_MatchedState(symst))
-            end
-        elseif typeof(k) == Int
-            if k == i
-                ftags = f.ftags[i]
-                intval, intst = make(f.style, fieldtype(T, i), v, ftags)
-                setval!(f.vals, intval, i)
-                return EarlyReturn(_MatchedState(intst))
-            end
-        else
-            fn = f.fsyms[i]
-            fstr = f.fstrs[i]
-            ftags = f.ftags[i]
-            field = get(ftags, :name, fstr)
-            if keyeq(k, field)
-                strval, strst = make(f.style, fieldtype(T, i), v, ftags)
-                setval!(f.vals, strval, i)
-                return EarlyReturn(_MatchedState(strst))
-            end
-        end
-    end
-    return st isa _MatchedState ? st.value : unknownfield(f.style, T, k, v)
-end
-
-(f::StructClosure{T,A,S,FS,FSS,FT})(k, v) where {T,A,S,FS,FSS,FT} = findfield(T, k, v, f)
-
-@inline makenoarg(style, ::Type{T}, source) where {T} = makenoarg(style, initialize(style, T, source), source)
-
-function makenoarg(style, y::T, source) where {T}
-    fsyms = fieldnamesymbols(T)
-    fstrs = fieldnamestrings(T)
-    st = applyeach(style, StructClosure{T}(y, style, fsyms, fstrs), source)
-    return y, st
-end
 
 macro _v(i)
     esc(:(isassigned(vals, $i) ? @inbounds(vals[$i])::fieldtype(T, $i) : get(defs, @inbounds(fsyms[$i]), nothing)::fieldtype(T, $i)))
@@ -1223,18 +1178,6 @@ end
     return ex
 end
 
-function makestruct(style, ::Type{T}, source) where {T}
-    vals = mem(fieldcount(T))
-    fsyms = fieldnamesymbols(T)
-    fstrs = fieldnamestrings(T)
-    st = applyeach(style, StructClosure{T}(vals, style, fsyms, fstrs), source)
-    if T <: NamedTuple
-        return T(_tuple(T, vals, style)), st
-    else
-        return _construct(T, vals, style, fsyms), st
-    end
-end
-
 make!(x::T, source; style::StructStyle=DefaultStyle()) where {T} = make!(style, x, source)
 make!(::Type{T}, source; style::StructStyle=DefaultStyle()) where {T} = make!(style, T, source)
 
@@ -1244,7 +1187,7 @@ function make!(style::StructStyle, x::T, source) where {T}
     elseif arraylike(style, x)
         _, st = makearray(style, x, source)
     elseif noarg(style, x)
-        _, st = makenoarg(style, x, source)
+        _, st = _hot_makenoarg(style, x, source)
     else
         throw(ArgumentError("Type `$T` does not support in-place `make!`"))
     end

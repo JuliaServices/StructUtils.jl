@@ -47,6 +47,9 @@ const KIND_CUSTOM = Int8(25)
 const KIND_DICT = Int8(26)
 const KIND_SET = Int8(27)
 const KIND_UNION2 = Int8(28)
+const KIND_TUPLE = Int8(29)
+const KIND_FIXEDARRAY = Int8(30)
+const KIND_SETLIKE = Int8(31)
 
 function scalarkind(@nospecialize(ft))
     ft === String && return KIND_STRING
@@ -118,10 +121,11 @@ struct FieldTable
     defaultsthunk::Any     # () -> NamedTuple, or nothing
     valsdefaults::Bool     # defaults reference parsed fields: use the 3-arg
                            # fielddefaults(style, T, vals) semantics (JIT only)
-    treesafe::Bool         # own fields free of choosetype tags and abstract
-                           # CUSTOM leaves: those hand the *source* to user
-                           # functions, whose representation formats may not
-                           # change (see interptreesafe for the recursive check)
+    volatile::Bool         # metadata comes from live per-type methods
+                           # (unregistered types, or overloads more specific
+                           # than the registration): rebuild per make so
+                           # stateful fieldtags/fielddefaults keep their
+                           # call-per-make semantics; never cached
 end
 
 # raw per-type metadata as registered by the struct macros: plain data, so
@@ -143,6 +147,9 @@ end
 # the hot path of every structlike `make`)
 struct MetaSnap
     raw::IdDict{Any,RawMeta}
+    # (target type) => [(style type) => root ValueSpec] for non-struct
+    # targets (containers, tuples) driven through the interpreter directly
+    roots::IdDict{Any,Vector{Pair{DataType,Any}}}
     # (target type) => [(style type) => resolved table]; per style TYPE
     # because fieldtagkey namespacing and metadata-method resolution are
     # style-dependent
@@ -154,6 +161,7 @@ mutable struct MetaStore
 end
 
 const METASTORE = MetaStore(MetaSnap(IdDict{Any,RawMeta}(),
+    IdDict{Any,Vector{Pair{DataType,Any}}}(),
     IdDict{Any,Vector{Pair{DataType,FieldTable}}}()))
 const META_LOCK = ReentrantLock()
 
@@ -197,7 +205,9 @@ function register_fieldtable!(@nospecialize(T::Type); defaults=nothing, tags=not
         raw[T] = RawMeta(nt, defaults, tags, nonstruct, tm, dm, valsdependent)
         tables = copy(old.tables)
         empty!(tables) # invalidate resolved tables (nested kinds may change)
-        @atomic METASTORE.snap = MetaSnap(raw, tables)
+        roots = copy(old.roots)
+        empty!(roots)
+        @atomic METASTORE.snap = MetaSnap(raw, roots, tables)
     finally
         unlock(META_LOCK)
     end
@@ -266,6 +276,12 @@ function kindfor(@nospecialize(ft))
     end
     ft isa DataType || return KIND_UNSUPPORTED
     _isvectortype(ft) && return KIND_VECTOR
+    if !TRIM_BUILD
+        ft <: Tuple && isconcretetype(ft) && return KIND_TUPLE
+        ft <: AbstractSet && isconcretetype(ft) && return KIND_SETLIKE
+        ft <: AbstractArray && isconcretetype(ft) && !(ft <: AbstractVector) &&
+            return KIND_FIXEDARRAY
+    end
     if getfield(getfield(ft, :name), :wrapper) === Dict &&
        length(getfield(ft, :parameters)::Core.SimpleVector) == 2
         return TRIM_BUILD ? KIND_UNSUPPORTED : KIND_DICT
@@ -302,11 +318,12 @@ end
 
 function buildtable(@nospecialize(T::Type), style::StructStyle)
     T isa DataType ||
-        return FieldTable(Nothing, false, FieldSpec[], false, false, nothing, false, true)
+        return FieldTable(Nothing, false, FieldSpec[], false, false, nothing, false, false)
     tagkey = fieldtagkey(style)
     snap = @atomic METASTORE.snap
     meta = _rawmeta(snap, T)
     metaok = meta !== nothing
+    volatile = false
     valsdefaults = metaok && (meta::RawMeta).valsdependent
     if metaok && !TRIM_BUILD
         # the registered data is only valid while it is still what
@@ -347,9 +364,14 @@ function buildtable(@nospecialize(T::Type), style::StructStyle)
         tags = (;)
         thunk = nothing
     else
-        # unregistered (or overridden) type under JIT: the classic path owns
-        # it — exact semantics for manual/stateful metadata overloads
-        return FieldTable(T, false, FieldSpec[], false, false, nothing, false, true)
+        # unregistered (or overridden) type under JIT: consult the live
+        # per-type metadata methods, and mark the table volatile — it is
+        # rebuilt on every make, so stateful or later-redefined
+        # fieldtags/fielddefaults overloads keep their exact semantics
+        volatile = true
+        defaults = fielddefaults(style, T)
+        tags = _live_tags(style, T)
+        thunk = () -> fielddefaults(style, T)
     end
     isnt = T <: NamedTuple
     names = isnt ? (T.parameters[1]::Tuple) :
@@ -364,25 +386,23 @@ function buildtable(@nospecialize(T::Type), style::StructStyle)
     # what applies defaults
     ismut && !metaok && (eligible = false)
     anythunk = false
-    treesafe = true
     for i = 1:n
         fn = names[i]::Symbol
         ftags = _fieldtag_nt(tags, fn, tagkey)
+        if ftags === nothing && volatile && tags isa NamedTuple && isempty(tags)
+            # public per-field form: fieldtags(style, T, field) — consulted
+            # only when the whole-type form answers empty (mirroring
+            # _fieldtagtuple); the table is already volatile, so stateful
+            # per-field hooks keep their call-per-make semantics
+            pf = _live_pertags(style, T, fn)
+            pf isa NamedTuple && !isempty(pf) && (ftags = pf)
+        end
         ignored = _tagbool(ftags, :ignore)
         nm, aliases = _tagname_aliases(ftags, fn)
-        # exotic name tags route the whole type classic; the reassignment
-        # also keeps `nm` a plain Symbol for the spec constructor
-        nm === nothing && (eligible = false; nm = fn)
-        nm = nm::Symbol
+        # raw-key matching is a JIT facility; trim builds keep such types out
+        aliases isa RawKey && TRIM_BUILD && (eligible = false)
         ft0 = fieldtype(T, i)
         vs = valuespec(snap, style, ft0, ignored, ftags)
-        vs.kind == KIND_CUSTOM && !isconcretetype(vs.ft) && (treesafe = false)
-        # multidim/fixed-size arrays behave differently from materialized
-        # trees than from lazy sources (dimension discovery): formats that
-        # swap representations must keep such types on their classic path
-        vs.kind == KIND_CUSTOM && vs.ft isa DataType && vs.ft <: AbstractArray &&
-            !_isvectortype(vs.ft) && (treesafe = false)
-        ftags isa NamedTuple && haskey(ftags, :choosetype) && (treesafe = false)
         rawdef = _defaultfor(defaults, fn)
         def = rawdef isa NoDefault ? NODEFAULT : classify_default(rawdef)
         # an empty-vector default is only re-materializable when the spec
@@ -401,7 +421,7 @@ function buildtable(@nospecialize(T::Type), style::StructStyle)
     end
     valsdefaults && TRIM_BUILD && (eligible = false)
     return FieldTable(T, ismut, specs, eligible, anythunk && !valsdefaults,
-        (anythunk && !valsdefaults) ? thunk : nothing, valsdefaults, treesafe)
+        (anythunk && !valsdefaults) ? thunk : nothing, valsdefaults, volatile)
 end
 
 # build the recursive ValueSpec for one declared type. Unknown shapes degrade
@@ -413,9 +433,26 @@ function valuespec(snap::MetaSnap, style::StructStyle, @nospecialize(ft0), ignor
                    @nospecialize(ftags))
     nullable, missingable, ft = peel_nullmissing(ft0)
     k = ignored ? KIND_CUSTOM : kindfor(ft)
+    # pair-element vectors are dictlike by the trait ladder (built via
+    # addkeyval! push): the retained container machinery owns them
+    k == KIND_VECTOR && ft isa Type && ft <: AbstractVector{<:Pair} && (k = KIND_CUSTOM)
     if k == KIND_STRUCT
         fm = _rawmeta(snap, ft)
         fm !== nothing && (fm::RawMeta).nonstruct && (k = KIND_CUSTOM)
+        # @nonstruct also emits a structlike=false trait method, which
+        # persists in the defining package's image even when the registry
+        # mutation from its precompile session does not: honor it live
+        # (JIT-only: under juliac the single compile session keeps the
+        # registry authoritative)
+        !TRIM_BUILD && k == KIND_STRUCT && !structlike(style, ft) && (k = KIND_CUSTOM)
+        # types with their own `make` overloads (e.g. JSON's raw-capture
+        # JSONText) must stay on the generic arm — driving their fields
+        # through the interpreter would silently bypass user semantics
+        !TRIM_BUILD && k == KIND_STRUCT && _has_custom_make(ft) && (k = KIND_CUSTOM)
+        # style-level trait overrides outrank the structural classification:
+        # a struct the style declares dictlike/arraylike belongs to the
+        # dispatcher's container arms, not the field-table drive
+        !TRIM_BUILD && k == KIND_STRUCT && (dictlike(style, ft) || arraylike(style, ft)) && (k = KIND_CUSTOM)
         # mutable nested structs construct through their own table
         !TRIM_BUILD && ft isa DataType && ismutabletype(ft) && !(fm !== nothing) && (k = KIND_CUSTOM)
     end
@@ -437,6 +474,21 @@ function valuespec(snap::MetaSnap, style::StructStyle, @nospecialize(ft0), ignor
             KIND_UINT64, KIND_UINT32, KIND_UINT16, KIND_UINT8) || (k = KIND_CUSTOM)
         if k == KIND_DICT
             child = valuespec(snap, style, _dict_valtype(ft), false, nothing)
+            child.kind == KIND_UNSUPPORTED && (k = KIND_CUSTOM; child = nothing)
+        end
+    elseif k == KIND_TUPLE
+        members = StructUtils.ValueSpec[valuespec(snap, style, fieldtype(ft, i), false, nothing)
+                                        for i = 1:fieldcount(ft)]
+        any(m -> m.kind == KIND_UNSUPPORTED, members) ? (k = KIND_CUSTOM) : (child = members)
+    elseif k == KIND_SETLIKE || k == KIND_FIXEDARRAY
+        if TRIM_BUILD
+            # JIT-only kinds: the generic eltype below is not verifier-
+            # resolvable; trim keeps sets and fixed-size arrays on the
+            # generic arm (their pre-expansion behavior)
+            k = KIND_CUSTOM
+        else
+            elt = eltype(ft)
+            child = valuespec(snap, style, elt, false, nothing)
             child.kind == KIND_UNSUPPORTED && (k = KIND_CUSTOM; child = nothing)
         end
     elseif k == KIND_UNION2
@@ -488,13 +540,19 @@ function _tagname_aliases(@nospecialize(ftags), fn::Symbol)
             elseif x isa Symbol
                 push!(strs, String(x))
             else
-                return nothing, nothing # exotic alias entry: type goes classic
+                return fn, RawKey(nm) # exotic entry: generic keyeq match
             end
         end
         syms = Symbol[Symbol(x) for x in strs]
         return syms[1], (strs, syms)
     end
-    return nothing, nothing # exotic name tag: type goes classic
+    return fn, RawKey(nm) # exotic name tag: generic keyeq match
+end
+
+# wrapper marking a name tag the fast matchers can't table-ize; _findspec
+# falls back to the classic keyeq contract for these (JIT only)
+struct RawKey
+    x::Any
 end
 
 # `nothing` on throw: a defaults thunk that cannot evaluate standalone
@@ -538,6 +596,31 @@ function _defaultfor(@nospecialize(defaults), fn::Symbol)
     return getfield(defaults, fn)
 end
 
+_live_tags(style::StructStyle, @nospecialize(T)) = try
+    fieldtags(style, T)
+catch
+    (;)
+end
+
+# a `make` method more specific than the generic dispatcher exists for T:
+# checked once per table build (cached with the table; volatile tables are
+# already the deliberate slow path). Queried with the CONCRETE Type{T}
+# singleton — a `Type{<:T}` query would intersect every emitted
+# `make(::StructStyle, ::Type{S}, ::Any) where S<:Other` method through the
+# bottom type (S = Union{} inhabits both bounds)
+_has_custom_make(@nospecialize(T)) = try
+    generic = which(make, Tuple{StructStyle,Type,Any})
+    any(m -> m !== generic, methods(make, Tuple{StructStyle,Type{T},Any}))
+catch
+    false
+end
+
+_live_pertags(style::StructStyle, @nospecialize(T), fn::Symbol) = try
+    fieldtags(style, T, fn)
+catch
+    (;)
+end
+
 function fieldtable(@nospecialize(T::Type), style::StructStyle)
     styletype = typeof(style)
     snap = @atomic METASTORE.snap
@@ -548,6 +631,7 @@ function fieldtable(@nospecialize(T::Type), style::StructStyle)
         end
     end
     tbl = buildtable(T, style)
+    tbl.volatile && return tbl # live-metadata tables are never cached
     lock(META_LOCK)
     try
         old = @atomic METASTORE.snap
@@ -561,7 +645,7 @@ function fieldtable(@nospecialize(T::Type), style::StructStyle)
         if !found
             push!(v, styletype => tbl)
             tables[T] = v
-            @atomic METASTORE.snap = MetaSnap(old.raw, tables)
+            @atomic METASTORE.snap = MetaSnap(old.raw, old.roots, tables)
         end
     finally
         unlock(META_LOCK)
@@ -650,8 +734,9 @@ end
 
 # @noarg mutables: the empty constructor applies defaults (honoring
 # per-style `initialize` overloads under JIT), parsed slots overwrite via
-# the setfield! builtin. Trim builds construct uninitialized and apply the
-# table defaults instead — `initialize` overloads are a JIT-only nicety.
+# _setfield! (which honors @atomic field declarations). Trim builds
+# construct uninitialized and apply the table defaults instead —
+# `initialize` overloads are a JIT-only nicety.
 function _construct_mutable(style::StructStyle, tbl::FieldTable, slots::Vector{Any}, @nospecialize(source))
     specs = tbl.specs
     n = length(specs)
@@ -663,12 +748,12 @@ function _construct_mutable(style::StructStyle, tbl::FieldTable, slots::Vector{A
             sp = @inbounds specs[i]
             d = sp.default
             if d === NODEFAULT
-                sp.spec.nullable ? setfield!(obj, i, nothing) :
-                sp.spec.missingable ? setfield!(obj, i, missing) : nothing
+                sp.spec.nullable ? _setfield!(obj, i, nothing) :
+                sp.spec.missingable ? _setfield!(obj, i, missing) : nothing
             elseif d === FRESHEMPTY
-                setfield!(obj, i, _alloc_vector((sp.spec.child::ValueSpec).declft, 0))
+                _setfield!(obj, i, _alloc_vector((sp.spec.child::ValueSpec).declft, 0))
             elseif d !== THUNKDEFAULT
-                setfield!(obj, i, d)
+                _setfield!(obj, i, d)
             end
         end
     else
@@ -676,7 +761,7 @@ function _construct_mutable(style::StructStyle, tbl::FieldTable, slots::Vector{A
     end
     for i = 1:n
         isassigned(slots, i) || continue
-        setfield!(obj, i, @inbounds slots[i])
+        _setfield!(obj, i, @inbounds slots[i])
     end
     return obj
 end
@@ -842,7 +927,11 @@ struct InterpClosure{S<:StructStyle}
 end
 
 function _findspec(specs::Vector{FieldSpec}, @nospecialize(k))
-    if k isa Symbol
+    if k isa Int
+        # positional sources (Vector/Tuple elements via applyeach): index is
+        # field order, matching the classic closures' `k == i` arm
+        return 1 <= k <= length(specs) ? k : 0
+    elseif k isa Symbol
         for i = 1:length(specs)
             sp = @inbounds specs[i]
             (sp.namesym === k || sp.fieldsym === k) && return i
@@ -858,10 +947,14 @@ function _findspec(specs::Vector{FieldSpec}, @nospecialize(k))
         end
         return 0
     end
-    # rare path: tuple-alias name tags register extra match candidates
+    # rare path: alias tuples and raw name tags register extra candidates
     for i = 1:length(specs)
         al = @inbounds(specs[i]).aliases
         al === nothing && continue
+        if al isa RawKey
+            !TRIM_BUILD && keyeq(k, al.x) && return i
+            continue
+        end
         strs, syms = al::Tuple{Vector{String},Vector{Symbol}}
         if k isa Symbol
             for a in syms
@@ -883,14 +976,31 @@ function (f::InterpClosure{S})(@nospecialize(k), @nospecialize(v)) where {S}
     sp = @inbounds specs[i]
     vs = sp.spec
     if v === nothing && vs.kind != KIND_ANY && vs.kind != KIND_CUSTOM
-        if vs.nullable
-            f.slots[i] = nothing
-        elseif vs.missingable
+        # classic @_peel order: null-like sources take the Missing arm
+        # first when the field admits both
+        if vs.missingable
             f.slots[i] = missing
+        elseif vs.nullable
+            f.slots[i] = nothing
         elseif TRIM_BUILD
             _liftfail(vs.kind, sp.name)
         else
             x, _ = lift(f.style, vs.ft, nothing)
+            f.slots[i] = x
+        end
+        return defaultstate(f.style)
+    elseif v === missing && vs.kind != KIND_ANY && vs.kind != KIND_CUSTOM
+        # classic @_peel parity: missing is null-like, Missing arm first.
+        # Kept as a separate branch with a CONSTANT third argument so the
+        # lift dispatch narrows to a single method under the verifier.
+        if vs.missingable
+            f.slots[i] = missing
+        elseif vs.nullable
+            f.slots[i] = nothing
+        elseif TRIM_BUILD
+            _liftfail(vs.kind, sp.name)
+        else
+            x, _ = lift(f.style, vs.ft, missing)
             f.slots[i] = x
         end
         return defaultstate(f.style)
@@ -957,6 +1067,34 @@ function _spec_value(style::StructStyle, vs::ValueSpec, @nospecialize(v), name::
         arm = (v isa AbstractArray || v isa AbstractSet) ? (vs.child::ValueSpec) :
                                                            (vs.child2::ValueSpec)
         return _spec_nullwrap(style, arm, v, name)
+    elseif k == KIND_TUPLE
+        if TRIM_BUILD
+            _liftfail(k, name)
+        else
+            return _spec_tuple(style, vs, v, name)
+        end
+    elseif k == KIND_SETLIKE
+        if TRIM_BUILD
+            _liftfail(k, name)
+        else
+            set = initialize(style, vs.ft, v)
+            el = vs.child::ValueSpec
+            if v isa AbstractVector || v isa AbstractSet
+                for ev in v
+                    push!(set, _spec_nullwrap(style, el, ev, name))
+                end
+                return set
+            end
+            TRIM_BUILD && _liftfail(vs.kind, name)
+            x, _ = makearray(style, vs.declft, v)
+            return x
+        end
+    elseif k == KIND_FIXEDARRAY
+        if TRIM_BUILD
+            _liftfail(k, name)
+        else
+            return _spec_fixedarray(style, vs, v, name)
+        end
     elseif k == KIND_ANY
         return v
     elseif k == KIND_CUSTOM
@@ -977,10 +1115,18 @@ end
 # elements, union arms)
 function _spec_nullwrap(style::StructStyle, vs::ValueSpec, @nospecialize(v), name::String)
     if v === nothing && vs.kind != KIND_ANY && vs.kind != KIND_CUSTOM
-        vs.nullable && return nothing
+        # classic @_peel order: Missing arm first when both are admitted
         vs.missingable && return missing
+        vs.nullable && return nothing
         TRIM_BUILD && _liftfail(vs.kind, name)
         x, _ = lift(style, vs.ft, nothing)
+        return x
+    elseif v === missing && vs.kind != KIND_ANY && vs.kind != KIND_CUSTOM
+        # classic @_peel: missing is null-like, the Missing arm wins first
+        vs.missingable && return missing
+        vs.nullable && return nothing
+        TRIM_BUILD && _liftfail(vs.kind, name)
+        x, _ = lift(style, vs.ft, missing)
         return x
     end
     return _spec_value(style, vs, v, name)
@@ -995,8 +1141,9 @@ function _spec_vector(style::StructStyle, vs::ValueSpec, @nospecialize(v), name:
             _setvec!(arr, j, _spec_nullwrap(style, el, @inbounds(v[j]), name))
         end
         return arr
-    elseif !TRIM_BUILD && v isa AbstractVector
-        # generic source vectors (e.g. a Vector{Int} value inside a user Dict)
+    elseif !TRIM_BUILD && v isa AbstractVector && !(v isa AbstractVector{<:Pair})
+        # generic source vectors (e.g. a Vector{Int} value inside a user Dict);
+        # pair-element vectors are keyed sources and fall to makearray below
         n = length(v)
         arr = _alloc_vector(el.declft, n)
         j = 1
@@ -1009,8 +1156,11 @@ function _spec_vector(style::StructStyle, vs::ValueSpec, @nospecialize(v), name:
     if TRIM_BUILD
         _liftfail(vs.kind, name)
     else
-        # non-vector source for a vector field: the generic path decides
-        x, _ = make(style, vs.declft::Type, v)
+        # non-vector source: the retained container machinery owns it
+        # (calling `make` would re-enter _interp_root on the same spec);
+        # trim fails loudly on shapes its folded path can't drive
+        TRIM_BUILD && _liftfail(vs.kind, name)
+        x, _ = makearray(style, vs.declft, v)
         return x
     end
 end
@@ -1030,10 +1180,90 @@ function _spec_dict(style::StructStyle, vs::ValueSpec, @nospecialize(v), name::S
             addkeyval!(dict, _liftdictkey(style, vs, dk, name), _spec_nullwrap(style, el, dv, name))
         end
     else
-        x, _ = make(style, vs.declft::Type, v)
+        TRIM_BUILD && _liftfail(vs.kind, name)
+        x, _ = makedict(style, vs.declft, v)
         return x
     end
     return dict
+end
+
+# tuple targets: positional consumption — array sources by index, keyed/
+# iterable sources in encounter order (classic maketuple semantics); members
+# lift through their own specs, construction via the same boxed-slot ccall
+# (tuple types are struct-shaped for jl_new_structv)
+function _spec_tuple(style::StructStyle, vs::ValueSpec, @nospecialize(v), name::String)
+    members = vs.child::Vector{ValueSpec}
+    n = length(members)
+    slots = Vector{Any}(undef, n)
+    i = 0
+    if v isa AbstractDict
+        for (_, ev) in v
+            i >= n && break
+            i += 1
+            slots[i] = _spec_nullwrap(style, @inbounds(members[i]), ev, name)
+        end
+    elseif (v isa AbstractVector && !(v isa AbstractVector{<:Pair})) || v isa Tuple
+        k = 0
+        for ev in v
+            k += 1
+            if i >= n
+                # surplus positional elements: the style's hook decides
+                # (default ignores, matching the classic tuple closure)
+                unknownfield(style, vs.ft::DataType, k, ev)
+                continue
+            end
+            i += 1
+            slots[i] = _spec_nullwrap(style, @inbounds(members[i]), ev, name)
+        end
+    else
+        # exotic source: the retained container machinery owns it (calling
+        # `make` here would re-enter _interp_root on the same spec — a loop);
+        # trim fails loudly — its folded container path can't drive this shape
+        TRIM_BUILD && _liftfail(vs.kind, name)
+        x, _ = maketuple(style, vs.declft, v)
+        return x
+    end
+    i == n || _missingfield(name, vs.ft::DataType)
+    GC.@preserve slots begin
+        return ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), vs.ft, pointer(slots), n % UInt32)
+    end
+end
+
+# multidim / fixed-size arrays from nested source vectors: discover the
+# dimensions from nesting depth and lengths (innermost length is dim 1),
+# flatten in column-major order, and build through the style's
+# arrayfromdata hook (which the StaticArrays extension also implements)
+function _spec_fixedarray(style::StructStyle, vs::ValueSpec, @nospecialize(v), name::String)
+    v isa AbstractVector || begin
+        TRIM_BUILD && _liftfail(vs.kind, name)
+        x, _ = makearray(style, vs.declft, v)
+        return x
+    end
+    dims = Int[]
+    probe = v
+    while probe isa AbstractVector
+        pushfirst!(dims, length(probe))
+        probe = isempty(probe) ? nothing : probe[1]
+    end
+    el = vs.child::ValueSpec
+    data = Vector{Any}()
+    _flatten_colmajor!(data, v, length(dims))
+    lifted = _alloc_vector(el.declft, length(data))
+    for j = 1:length(data)
+        _setvec!(lifted, j, _spec_nullwrap(style, el, @inbounds(data[j]), name))
+    end
+    return arrayfromdata(vs.ft, lifted, Tuple(dims))
+end
+
+function _flatten_colmajor!(data::Vector{Any}, @nospecialize(v), depth::Int)
+    if depth <= 0 || !(v isa AbstractVector)
+        push!(data, v)
+        return nothing
+    end
+    for ev in v
+        _flatten_colmajor!(data, ev, depth - 1)
+    end
+    return nothing
 end
 
 function _liftdictkey(style::StructStyle, vs::ValueSpec, @nospecialize(dk), name::String)
@@ -1055,9 +1285,23 @@ end
 # true when `source` is a tree shape the interpreter drives directly; under
 # trim only AbstractDict (the Vector{Pair} applyeach dispatch is ambiguous
 # between the Pair-vector and AbstractArray methods for the verifier)
+"""
+    StructUtils.interpsource(source) -> Bool
+
+`true` (the default) when `source` may be driven through the tier-0
+interpreter. Formats with lazy source types that carry their own `lift`
+protocols (e.g. JSON's `LazyValue`) overload this to `false`, keeping those
+sources on their format-owned descent.
+"""
+interpsource(@nospecialize(source)) = true
+
+# JIT: the interpreter drives any source applyeach understands unless the
+# source type opts out (trees get concrete fast arms in _interp_make;
+# everything else takes the dynamic applyeach arm). Trim keeps the
+# concrete-dict contract; non-tree sources route to the hot descent at the
+# dispatcher.
 _interpsource(@nospecialize(source)) =
-    TRIM_BUILD ? source isa AbstractDict :
-    (source isa AbstractDict || source isa AbstractVector{<:Pair})
+    TRIM_BUILD ? source isa AbstractDict : interpsource(source)
 
 # entry: returns (value, state) like every `make`. Both the target type and
 # the source are inference-erased (one instance per style, ever — the
@@ -1066,14 +1310,29 @@ _interpsource(@nospecialize(source)) =
 # under JIT (specializing on source here invites invalidation-recompile
 # blowups when extensions load mid-session)
 Base.@nospecializeinfer function _interp_make(style::StructStyle, @nospecialize(T::Type), @nospecialize(source))
+    if !(T isa DataType)
+        # incomplete parametric targets can't table; the specialized descent
+        # keeps generic semantics — NOT `make`: the make/_interp_make
+        # inference cycle sends constprop into a never-terminating compile.
+        # The assert keeps _interp_make's return type a Tuple so concrete
+        # call-site destructures stay statically resolvable (trim fails
+        # loudly at parse time).
+        TRIM_BUILD && _liftfail(KIND_STRUCT, string(T))
+        return _hot_make3(style, T, source)::Tuple{Any,Any}
+    end
     tbl = fieldtable(T, style)
     if !tbl.eligible
-        # trim recursion into an ineligible type fails loudly at parse time;
-        # under JIT the dispatcher gate prevents reaching here, but fall back
-        # to the generic path for robustness
+        # tables the interpreter can't drive (mutables without @noarg
+        # registration, thunked defaults with no thunk): the specialized
+        # descent owns them, same shape as the non-DataType arm above
         TRIM_BUILD && _liftfail(KIND_STRUCT, String(nameof(tbl.T)))
-        return make(style, T, source)
+        return _hot_make3(style, T, source)::Tuple{Any,Any}
     end
+    return _interp_make(style, tbl, source)
+end
+
+# table-based core: the drive + construction (one instance per style)
+Base.@nospecializeinfer function _interp_make(style::StructStyle, tbl::FieldTable, @nospecialize(source))
     slots = Vector{Any}(undef, length(tbl.specs))
     f = InterpClosure(style, tbl, slots)
     st = if source isa Dict{String,Any}
@@ -1085,17 +1344,69 @@ Base.@nospecializeinfer function _interp_make(style::StructStyle, @nospecialize(
     else
         _liftfail(KIND_STRUCT, String(nameof(tbl.T)))
     end
-    # match makestruct: EarlyReturn from a custom unknownfield flows through
+    # EarlyReturn from a custom unknownfield flows through
     # as state; construction still happens
     return _construct_interp(style, tbl, slots, source), st
 end
 
-# gate consulted from `make`'s structlike arm: interpret when the target has
-# an eligible table and the source is tree-shaped
-function _interpready(style::StructStyle, @nospecialize(T::Type), @nospecialize(source))
-    T isa DataType || return false
-    _interpsource(source) || return false
-    return fieldtable(T, style).eligible
+# root ValueSpec for a non-struct target (Vector, Dict, Set, Tuple, Matrix,
+# or unions thereof): built once per (target, style type), same store
+function rootspec(@nospecialize(T::Type), style::StructStyle)
+    styletype = typeof(style)
+    snap = @atomic METASTORE.snap
+    entry = get(snap.roots, T, nothing)
+    if entry !== nothing
+        for (st, vs) in entry
+            st === styletype && return vs::ValueSpec
+        end
+    end
+    vs = valuespec(snap, style, T, false, nothing)
+    lock(META_LOCK)
+    try
+        old = @atomic METASTORE.snap
+        roots = copy(old.roots)
+        v = get(roots, T, nothing)
+        v = v === nothing ? Vector{Pair{DataType,Any}}() : copy(v)
+        any(p -> first(p) === styletype, v) || push!(v, styletype => vs)
+        roots[T] = v
+        @atomic METASTORE.snap = MetaSnap(old.raw, roots, old.tables)
+    finally
+        unlock(META_LOCK)
+    end
+    return vs
+end
+
+# entry for non-struct targets: run the spec tree over the source and wrap
+# in the (value, state) contract. @nospecializeinfer: the source-trait check
+# must stay a runtime verdict — folding `interpsource(::SomeLazy) = false`
+# at a dispatcher call site erases this arm and invites a pathological
+# constprop spiral through the mutually recursive make family (observed as
+# a never-terminating typed-parse compile in JSON's workload)
+Base.@nospecializeinfer function _interp_root(style::StructStyle, @nospecialize(T::Type), @nospecialize(source))
+    # lazy/positional format sources carry their own (value, pos) state
+    # contract: the retained container machinery owns them
+    _interpsource(source) || return nothing
+    vs = rootspec(T, style)
+    if vs.kind == KIND_CUSTOM || vs.kind == KIND_UNSUPPORTED
+        # a target the spec tree can't describe (custom AbstractDict
+        # subtypes, exotic arraylikes): decline — the dispatcher's container
+        # arms own it
+        return nothing
+    end
+    return _spec_nullwrap(style, vs, source, "root"), defaultstate(style)
+end
+
+# gate consulted from `make`'s structlike arm under JIT: returns the built
+# field table when the target is eligible and the source tree-shaped, else
+# nothing. Returning the table (rather than a Bool) lets the dispatcher hand
+# it straight to the interpreter — volatile tables rebuild on every
+# `fieldtable` call, and a second build would double-fire stateful
+# fieldtags/fielddefaults hooks
+function _interptable(style::StructStyle, @nospecialize(T::Type), @nospecialize(source))
+    T isa DataType || return nothing
+    _interpsource(source) || return nothing
+    tbl = fieldtable(T, style)
+    return tbl.eligible ? tbl : nothing
 end
 
 """
@@ -1107,35 +1418,3 @@ end
 interpready(style::StructStyle, @nospecialize(T::Type)) =
     T isa DataType && fieldtable(T, style).eligible
 
-"""
-    StructUtils.interptreesafe(style, T) -> Bool
-
-`true` when `T`'s field table — including nested struct and vector-element
-tables — contains no choosetype-tagged fields or abstract CUSTOM leaves.
-Those receive the raw source value in user functions, so formats that
-materialize an alternate tree representation for the interpreter (e.g. JSON
-parsing to `Object` instead of handing out lazy values) must keep such types
-on their classic path.
-"""
-interptreesafe(style::StructStyle, @nospecialize(T::Type)) =
-    _treesafe(style, T, Base.IdSet{Any}())
-
-function _treesafe(style::StructStyle, @nospecialize(T), seen::Base.IdSet{Any})::Bool
-    T in seen && return true
-    push!(seen, T)
-    T isa DataType || return true
-    tbl = fieldtable(T, style)
-    tbl.eligible || return true # routed classic anyway
-    tbl.treesafe || return false
-    for sp in tbl.specs
-        _spec_treesafe(style, sp.spec, seen) || return false
-    end
-    return true
-end
-
-function _spec_treesafe(style::StructStyle, vs::ValueSpec, seen::Base.IdSet{Any})::Bool
-    vs.kind == KIND_STRUCT && return _treesafe(style, vs.ft, seen)
-    vs.child isa ValueSpec && !_spec_treesafe(style, vs.child::ValueSpec, seen) && return false
-    vs.child2 isa ValueSpec && !_spec_treesafe(style, vs.child2::ValueSpec, seen) && return false
-    return true
-end

@@ -134,7 +134,7 @@ HotStructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FS
 
 # literal field indices and field types: the runtime-`i` closure form makes
 # `fieldtype(T, i)` abstract, funneling every recursive call through the
-# single generic instance — unresolvable under --trim (PR #62's findfield)
+# single generic instance — unresolvable under --trim (PR #62's lesson)
 @generated function _hot_findfield(::Type{T}, k, v, f) where {T}
     ex = Expr(:block)
     push!(ex.args, :(Base.@_inline_meta))
