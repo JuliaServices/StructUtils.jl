@@ -502,7 +502,7 @@ function valuespec(snap::MetaSnap, style::StructStyle, @nospecialize(ft0), ignor
         # source-shape disambiguation only works when exactly ONE member is
         # array-like (arrays and sets, per the trait defaults) — with two
         # array-like members the choice would be ambiguous, so the union
-        # degrades to the generic arm (which errors, deliberately)
+        # degrades to the generic arm (which errors)
         arr_a = _shape_arraylike(a)
         arr_b = _shape_arraylike(b)
         if arr_a == arr_b
@@ -955,7 +955,7 @@ end
 
 # ---------------- the interpreter ----------------
 
-# per-(style, source) closure; deliberately NOT parameterized on the target
+# per-(style, source) closure; not parameterized on the target
 # type, so applyeach specializes once per source shape, never per struct
 struct InterpClosure{S<:StructStyle}
     style::S
@@ -1409,10 +1409,9 @@ end
 
 # entry for non-struct targets: run the spec tree over the source and wrap
 # in the (value, state) contract. The un-specialized arguments keep the
-# source check below a runtime decision: if the compiler could prove its
-# answer at a call site it would delete this arm, and compiling the
-# mutually recursive make functions with arms deleted has hung the
-# compiler outright
+# source check below a runtime decision the compiler cannot prove — the
+# make functions are mutually recursive, and constant folding through that
+# cycle does not terminate, so both routing arms must remain visible
 Base.@nospecializeinfer function _interp_root(style::StructStyle, @nospecialize(T::Type), @nospecialize(source))
     # lazy/positional format sources carry their own (value, pos) state
     # contract: the retained container machinery owns them

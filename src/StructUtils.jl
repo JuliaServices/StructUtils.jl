@@ -987,11 +987,10 @@ function make(style::StructStyle, T::Type, source)
     elseif noarg(style, T) || structlike(style, T)
         # Struct-shaped targets: walkable sources go through the interpreter,
         # everything else through the per-type hot path (see the note at the
-        # top of this file). The gate must stay a runtime check — if the
-        # compiler could prove its answer at a call site it would delete one
-        # arm, and compiling `make` with an arm deleted has hung the compiler
-        # (the make functions are mutually recursive, and constant-folding
-        # inside that cycle doesn't terminate).
+        # top of this file). The gate is a runtime check the compiler cannot
+        # prove — the make functions are mutually recursive, and constant
+        # folding through that cycle does not terminate, so both arms must
+        # remain visible at every call site.
         if TRIM_BUILD
             _interpsource(source) && return _interp_make(style, T, source)
         else

@@ -188,12 +188,11 @@ HotStructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FS
     return ex
 end
 
-# The custom-make field arm calls `make` through this shim instead of
-# directly: with the field type a compile-time constant, the compiler tries
-# to evaluate its way through the mutually recursive make functions and
-# hangs. The shim's arguments are deliberately un-specialized, so it
-# compiles once and dispatches at runtime — where the user's method wins by
-# ordinary specificity.
+# The custom-make field arm calls `make` through this shim: with the field
+# type a compile-time constant, constant folding through the mutually
+# recursive make functions does not terminate. The shim's un-specialized
+# arguments compile once and dispatch at runtime, where the user's method
+# wins by ordinary specificity.
 Base.@nospecializeinfer @noinline _make_override(style::StructStyle, @nospecialize(T::Type), @nospecialize(source), @nospecialize(tags)) =
     make(style, T, source, tags)
 
