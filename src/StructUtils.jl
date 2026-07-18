@@ -5,36 +5,44 @@ using Preferences, PrecompileTools
 
 export @noarg, @defaults, @tags, @kwarg, @nonstruct, Selectors
 
-# Compile-time preference for `juliac --trim` builds: prunes the tier-0
-# interpreter's JIT-only arms (per-type metadata method consultation, dynamic
-# lift fallbacks, defaults-thunk re-evaluation) so the interpreter's call
-# graph is fully verifier-resolvable. This describes the build environment —
-# a no-JIT binary — not a behavior tier: parse results are identical, and
-# shapes outside the closed kind universe fail loudly at parse time instead
-# of falling back to dynamic dispatch that could not run anyway.
+# Set `trim_build = true` in an app's LocalPreferences.toml when building it
+# with `juliac --trim`. A trimmed binary has no JIT, so any code path that
+# resolves methods at runtime cannot exist in it — this constant compiles
+# those paths out (looking up per-type metadata methods, generic `lift`
+# fallbacks, re-running default-value thunks). It describes the build
+# environment, not a behavior mode: results are identical, and the few
+# shapes that would have needed runtime dispatch throw a clear error at
+# parse time instead.
 const TRIM_BUILD = @load_preference("trim_build", false)::Bool
 
 # ── how `make` is organized ─────────────────────────────────────────────────
-# Three construction mechanisms share one public `make` surface; dispatch
-# picks between them, never a flag:
+# Two construction mechanisms share the public `make` surface. Which one runs
+# is decided by dispatch and a couple of runtime checks — there is no flag:
 #
-#   classic  (this file)   per-target-type closures driven by `applyeach`;
-#                          serves non-tree sources (NamedTuples, structs,
-#                          Tables rows) in JIT sessions. Compiles per target
-#                          type; not verifier-resolvable, so trim builds
-#                          never route here.
-#   tier-0   (interp.jl)   a non-specializing field-table interpreter for
-#                          tree-shaped sources (AbstractDict, Vector{<:Pair});
-#                          near-zero per-type compile cost, trim-verifiable
-#                          under the `trim_build` preference.
-#   hot      (hot.jl)      fully-specialized dispatchers (`::Type{T} where T`
-#                          everywhere), reachable via methods the struct
-#                          macros' `:hot` option emits — compiled into the
-#                          *defining package's* image through the hot-hook
-#                          registry — and, under `trim_build`, as the routing
-#                          target for every non-tree structlike make.
+#   interpreter  (interp.jl)  The default. Walks a per-type "field table"
+#                             (names, types, defaults, tags — built once and
+#                             cached) and fills fields by matching source
+#                             keys against it. The same compiled code handles
+#                             every target type, so a new struct costs a
+#                             table build, not a compile. Handles dict-like
+#                             and key/value-pair sources.
 #
-# The routing lives in the structlike arm of the 3-arg `make` below.
+#   hot          (hot.jl)     Fully compiled per target type — the fastest
+#                             steady-state path, at the cost of compiling
+#                             each type it touches. Runs when: a struct opts
+#                             in via the macros' `:hot` option (its code is
+#                             then compiled while the *defining package*
+#                             precompiles, so first use is fast), or when the
+#                             source isn't something the interpreter walks
+#                             (format-owned lazy values, Tables.jl rows).
+#
+# Container targets (Tuple/Array/Dict/Set) have their own builders further
+# down in this file; the interpreter reuses them for container-typed fields.
+#
+# Building a binary with `juliac --trim` requires one preference in the
+# app's project (`trim_build = true`). It compiles out the arms that resolve
+# methods at runtime — the trim verifier rejects those — leaving only code
+# whose call targets are known statically.
 # ────────────────────────────────────────────────────────────────────────────
 
 """
@@ -915,11 +923,11 @@ end
     return nothing
 end
 
-# shared Missing/Nothing/2-union peel prologue for the four make dispatchers
-# (classic and hot, 3- and 4-arg): `recurse` re-enters with the peeled type,
-# `extra...` carries trailing arguments (the tags NamedTuple for 4-arg forms).
-# Expects `style`, `T`, and `source` in scope; falls through when no peel
-# applies.
+# Shared prologue for the make dispatchers (3- and 4-arg, and their hot
+# counterparts): strips Missing/Nothing off union targets and splits 2-arm
+# unions, re-entering `recurse` with the narrowed type. `extra...` carries
+# trailing arguments (the tags NamedTuple for the 4-arg forms). Expects
+# `style`, `T`, and `source` in scope; falls through when nothing applies.
 macro _peel(recurse, extra...)
     esc(quote
         if T !== Any
@@ -976,26 +984,14 @@ function make(style::StructStyle, T::Type, source)
             r !== nothing && return r
         end
         return makearray(style, T, source)
-    elseif noarg(style, T)
-        # same tier routing as the structlike arm below
-        if TRIM_BUILD
-            _interpsource(source) && return _interp_make(style, T, source)
-        else
-            tbl = _interptable(style, T, source)
-            tbl !== nothing && return _interp_make(style, tbl, source)
-        end
-        return _hot_make3(style, T, source)
-    elseif structlike(style, T)
-        # struct targets route by tier (see the architecture note at the top
-        # of this file): eligible tree-shaped sources construct through the
-        # tier-0 interpreter — one engine instance per style, no per-type
-        # compile; everything else (lazy format sources, Tables.jl-style row
-        # sources, ineligible tables) takes the fully-specialized hot
-        # descent. The JIT gate stays a RUNTIME verdict (`_interpready`'s
-        # table lookup cannot const-fold): letting the source trait fold at
-        # a call site both invites a constprop spiral through the recursive
-        # make family and prunes arms the no-preference trim verification
-        # relies on seeing with narrow types.
+    elseif noarg(style, T) || structlike(style, T)
+        # Struct-shaped targets: walkable sources go through the interpreter,
+        # everything else through the per-type hot path (see the note at the
+        # top of this file). The gate must stay a runtime check — if the
+        # compiler could prove its answer at a call site it would delete one
+        # arm, and compiling `make` with an arm deleted has hung the compiler
+        # (the make functions are mutually recursive, and constant-folding
+        # inside that cycle doesn't terminate).
         if TRIM_BUILD
             _interpsource(source) && return _interp_make(style, T, source)
         else

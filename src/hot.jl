@@ -1,15 +1,13 @@
-# The :hot tier: a fully-specialized `make` family, reachable only through
-# methods emitted by the struct macros' `:hot` option (or the standalone
-# `@hot`). Every dispatcher here carries `::Type{T} where T` — the forced
-# per-type specialization PR #62 gated globally behind a preference — but
-# scoped to annotated types, so nobody else pays the compile time. The
-# emitted entry tree-gates first: eligible tree-shaped sources take the
-# tier-0 interpreter (faster at request sizes, and interpretable in trimmed
-# binaries), while the hot descent owns everything else (format lazy values,
-# NamedTuples, structs) with a statically-resolvable call graph — no
-# preference required for `juliac --trim`. Under `trim_build` the make
-# dispatcher also routes *unannotated* non-tree structlike targets here; see
-# the architecture note at the top of StructUtils.jl.
+# The hot tier: a `make` family that compiles a dedicated method for each
+# target type (`::Type{T} where T` throughout) — the fastest steady-state
+# path, paid for in compile time. A struct opts in through the macros' :hot
+# option (or the standalone `@hot`), which also compiles its parse/write
+# paths while the *defining package* precompiles, so first use is already
+# fast. Sources the interpreter doesn't walk (format-owned lazy values,
+# Tables.jl rows) also land here, whether or not the type opted in. Every
+# call target below is known statically, which is what `juliac --trim`
+# builds require; see the note at the top of StructUtils.jl for the full
+# routing picture.
 
 """
     StructUtils.ishot(T) -> Bool
@@ -134,29 +132,34 @@ HotStructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FS
      cmf = TRIM_BUILD ? nothing : _custom_make_fields(T);
      HotStructClosure{T,A,S,FS,FSS,typeof(ftags),typeof(cmf)}(vals, style, fsyms, fstrs, ftags, cmf))
 
-# literal field indices and field types: the runtime-`i` closure form makes
-# `fieldtype(T, i)` abstract, funneling every recursive call through the
-# single generic instance — unresolvable under --trim (PR #62's lesson).
-# Under JIT, fields whose type carries its OWN `make` methods (raw-capture
-# types like JSON's JSONText, @choosetype-emitted union overrides) dispatch
-# through the 4-arg `make` so those hooks fire before any union peel — the
-# classic closures' behavior. The verdict lives on the closure (f.cmf,
-# memoized per type in the runtime world — a generator's frozen world could
-# never see late-defined hooks). Trim builds emit the plain hot field: the
-# runtime methods() reflection behind the verdict is not verifier-safe.
+# Generated so each field gets a literal index and a literal field type —
+# looping over `i` at runtime would make `fieldtype(T, i)` abstract, and an
+# abstractly-typed field call cannot be compiled ahead of time for trimmed
+# binaries. Two dispatch paths per field: types with their OWN `make`
+# methods (raw-capture types like JSON's JSONText, `@choosetype` overrides)
+# must go through the 4-arg `make` so those hooks fire before any union
+# handling; everything else takes the direct field path. That verdict rides
+# the closure (f.cmf) rather than being decided here, because this
+# generator expands against the method table as of StructUtils load time
+# and would miss any hook defined later. Trim builds always emit the direct
+# path — the verdict relies on runtime method reflection, which a trimmed
+# binary doesn't have.
 @generated function _hot_findfield(::Type{T}, k, v, f) where {T}
     ex = Expr(:block)
     push!(ex.args, :(Base.@_inline_meta))
     for i = 1:fieldcount(T)
         ft = fieldtype(T, i)
+        # the per-field call: trim builds always take the direct path (see
+        # the comment above); JIT branches on the closure's verdict
+        fcall = TRIM_BUILD ? :(_hot_field(f.style, $ft, v, ftags)) :
+                :(f.cmf[$i] ? _make_override(f.style, $ft, v, ftags) :
+                              _hot_field(f.style, $ft, v, ftags))
         push!(ex.args, quote
             if typeof(k) == Symbol
                 let fn = f.fsyms[$i], ftags = f.ftags[$i]
                     field = get(ftags, :name, fn)
                     if keyeq(k, field) || keyeq(k, fn)
-                        symval, symst = TRIM_BUILD ? _hot_field(f.style, $ft, v, ftags) :
-                            (f.cmf[$i] ? _make_override(f.style, $ft, v, ftags) :
-                                         _hot_field(f.style, $ft, v, ftags))
+                        symval, symst = $fcall
                         setval!(f.vals, symval, $i)
                         return symst
                     end
@@ -164,9 +167,7 @@ HotStructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FS
             elseif typeof(k) == Int
                 if k == $i
                     let ftags = f.ftags[$i]
-                        intval, intst = TRIM_BUILD ? _hot_field(f.style, $ft, v, ftags) :
-                            (f.cmf[$i] ? _make_override(f.style, $ft, v, ftags) :
-                                         _hot_field(f.style, $ft, v, ftags))
+                        intval, intst = $fcall
                         setval!(f.vals, intval, $i)
                         return intst
                     end
@@ -175,9 +176,7 @@ HotStructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FS
                 let fstr = f.fstrs[$i], ftags = f.ftags[$i]
                     field = get(ftags, :name, fstr)
                     if keyeq(k, field)
-                        strval, strst = TRIM_BUILD ? _hot_field(f.style, $ft, v, ftags) :
-                            (f.cmf[$i] ? _make_override(f.style, $ft, v, ftags) :
-                                         _hot_field(f.style, $ft, v, ftags))
+                        strval, strst = $fcall
                         setval!(f.vals, strval, $i)
                         return strst
                     end
@@ -189,11 +188,12 @@ HotStructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FS
     return ex
 end
 
-# inference barrier for the custom-make field arm: called with a CONST field
-# type from the generated closure, a raw `make` invocation invites the
-# constprop/irinterp spiral through the recursive make family (the
-# interpsource lesson); the widened shared instance dispatches at runtime,
-# where the user's override wins by ordinary specificity
+# The custom-make field arm calls `make` through this shim instead of
+# directly: with the field type a compile-time constant, the compiler tries
+# to evaluate its way through the mutually recursive make functions and
+# hangs. The shim's arguments are deliberately un-specialized, so it
+# compiles once and dispatches at runtime — where the user's method wins by
+# ordinary specificity.
 Base.@nospecializeinfer @noinline _make_override(style::StructStyle, @nospecialize(T::Type), @nospecialize(source), @nospecialize(tags)) =
     make(style, T, source, tags)
 
@@ -253,11 +253,10 @@ function _hot_makedict(style::StructStyle, dict::T, source) where {T}
     return dict, st
 end
 
-# entries targeted by the macro-emitted per-type `make` methods: eligible
-# trees take the interpreter (fast at that size, trim-clean via its own
-# story); the hot descent owns everything else with a static graph. The
-# eligibility check must live HERE — the interpreter's ineligible fallback
-# re-enters `make`, which would redispatch to the hot method forever.
+# Entry points for the per-type `make` methods the struct macros emit.
+# Even a `:hot` type prefers the interpreter when the source is walkable —
+# it's faster at typical sizes and works in trimmed binaries — so check
+# that here and fall through to the per-type descent for everything else.
 function _hot_entry(style::StructStyle, ::Type{T}, source) where {T}
     if _interpsource(source) && interpready(style, T)
         return _interp_make(style, T, source)

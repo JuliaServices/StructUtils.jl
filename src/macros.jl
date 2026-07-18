@@ -267,7 +267,7 @@ function parse_struct_def(kind, src, mod, expr; hot::Bool=false)
         end
         generate_field_defaults_and_tags!(ret, T, fields, typeparam_names, typeparams)
     end
-    # register tier-0 interpreter metadata: defaults and tags as plain data,
+    # register interpreter metadata: defaults and tags as plain data,
     # so trimmed binaries (and the interpreter generally) never need per-type
     # method dispatch to resolve them
     fields_with_defaults = [f for f in fields if f.default !== none]

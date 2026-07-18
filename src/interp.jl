@@ -1,21 +1,25 @@
-# Tier-0 "interpreter" make path: a non-specializing, field-table-driven
-# construction engine for struct targets from tree-like sources (AbstractDict,
-# Vector{<:Pair}). One compiled instance per (style, source-type) — never per
-# target type — so first-use compile cost for a new struct type is table-build
-# only (microseconds), and the whole engine precompiles into pkgimages.
+# The interpreter: the default way `make` builds structs. Instead of
+# compiling code for each target type, it describes each type once as data —
+# a FieldTable of (name, kind tag, default, tags) per field — and one shared
+# engine walks any source against that table. The engine specializes on the
+# style and the source container type, never on the target, so a brand-new
+# struct type costs a table build (microseconds), and the engine itself is
+# already compiled into the package image.
 #
-# Construction goes through dispatch-free runtime primitives (the same kernel
-# Serialization uses): jl_new_structv from boxed slots, jl_alloc_array_1d +
-# memoryref builtins for typed vectors. All per-field behavior is driven by a
-# closed set of kind tags computed once per type into a FieldTable.
+# Values become fields in two steps: a small closed set of "kind" tags
+# (below) says how to convert each leaf — string, the integer widths, dates,
+# UUIDs, nested struct, vector, dict, ... — and construction then goes
+# through the same runtime primitives Serialization uses (jl_new_structv
+# from a slot buffer; array builtins for typed vectors), which involve no
+# dispatch on the target type.
 #
-# Trim story: with the `trim_build` compile-time preference set, the JIT-only
-# arms (per-type fielddefaults/fieldtags consultation, dynamic `lift` for
-# custom leaf types, defaults-thunk re-evaluation, exotic key/source shapes)
-# are compile-time pruned, leaving a graph `juliac --trim=safe` can fully
-# verify. Types registered via the struct macros (or an explicit
-# `register_fieldtable!`) carry their defaults/tags as plain data and parse
-# through the interpreter in trimmed binaries with no per-type dispatch.
+# In a `trim_build = true` build (a `juliac --trim` binary), the arms that
+# need runtime method lookup — consulting per-type fieldtags/fielddefaults
+# methods, the generic `lift` fallback for custom leaf types, re-running
+# default thunks — are compiled out, since a trimmed binary has no JIT to
+# run them. Types registered by the struct macros carry their defaults and
+# tags as plain data, so they parse through the interpreter in trimmed
+# binaries with nothing left to look up.
 
 # closed kind universe; anything else is KIND_CUSTOM (dynamic lift, JIT-only)
 const KIND_UNSUPPORTED = Int8(0)
@@ -193,7 +197,7 @@ function register_fieldtable!(@nospecialize(T::Type); defaults=nothing, tags=not
     # capture which methods resolve this type's metadata right now (the
     # macro-emitted ones, or the generic fallbacks): if a more specific or
     # per-style overload appears later, table resolution detects the mismatch
-    # and routes that (style, T) to the classic path instead
+    # and rebuilds the table from the live methods instead
     tm = _whichmeta(fieldtags, T)
     dm = _whichmeta(fielddefaults, T)
     # explicit lock/unlock: a `lock() do` closure capturing @nospecialize
@@ -270,8 +274,9 @@ function kindfor(@nospecialize(ft))
     k = scalarkind(ft)
     k != KIND_UNSUPPORTED && return k
     if ft isa Union
-        # Nothing/Missing were already peeled: a remaining 2-union is the
-        # classic arraylike-vs-scalar disambiguation shape
+        # Nothing/Missing were already peeled: a remaining 2-union is
+        # decided by source shape (array-like source -> the array-like
+        # member, anything else -> the other member)
         return KIND_UNION2
     end
     ft isa DataType || return KIND_UNSUPPORTED
@@ -327,9 +332,9 @@ function buildtable(@nospecialize(T::Type), style::StructStyle)
     valsdefaults = metaok && (meta::RawMeta).valsdependent
     if metaok && !TRIM_BUILD
         # the registered data is only valid while it is still what
-        # fieldtags/fielddefaults would answer for this style: a per-style or
-        # more specific overload (possibly stateful) routes to the classic
-        # path, preserving exact semantics
+        # fieldtags/fielddefaults would answer for this style: if a per-style
+        # or more specific overload exists (possibly stateful), ignore the
+        # registration and consult the live methods every time
         m = meta::RawMeta
         tm = _whichmeta_style(fieldtags, style, T)
         dm = _whichmeta_style(fielddefaults, style, T)
@@ -424,11 +429,11 @@ function buildtable(@nospecialize(T::Type), style::StructStyle)
         (anythunk && !valsdefaults) ? thunk : nothing, valsdefaults, volatile)
 end
 
-# build the recursive ValueSpec for one declared type. Unknown shapes degrade
-# to KIND_CUSTOM — the generic 4-arg `make` arm with exact classic semantics
-# (one dynamic call per such value, JIT only) — rather than making the whole
-# type ineligible. Trait consultation is JIT-only; trim builds classify from
-# reflection alone.
+# Build the recursive ValueSpec for one declared field type. Shapes the
+# interpreter has no dedicated handling for degrade to KIND_CUSTOM, which
+# hands each such value to the generic 4-arg `make` (one dynamic call per
+# value) rather than making the whole type ineligible. Trait consultation
+# happens only in JIT sessions; trim builds classify from reflection alone.
 function valuespec(snap::MetaSnap, style::StructStyle, @nospecialize(ft0), ignored::Bool,
                    @nospecialize(ftags))
     nullable, missingable, ft = peel_nullmissing(ft0)
@@ -494,10 +499,10 @@ function valuespec(snap::MetaSnap, style::StructStyle, @nospecialize(ft0), ignor
     elseif k == KIND_UNION2
         a = getfield(ft, :a)
         b = getfield(ft, :b)
-        # mirror the classic rule exactly: disambiguation applies only when
-        # exactly ONE member is arraylike (by the trait defaults: arrays and
-        # sets) — two arraylike members are ambiguous and take the generic
-        # arm, which reproduces classic behavior including its errors
+        # source-shape disambiguation only works when exactly ONE member is
+        # array-like (arrays and sets, per the trait defaults) — with two
+        # array-like members the choice would be ambiguous, so the union
+        # degrades to the generic arm (which errors, deliberately)
         arr_a = _shape_arraylike(a)
         arr_b = _shape_arraylike(b)
         if arr_a == arr_b
@@ -549,8 +554,9 @@ function _tagname_aliases(@nospecialize(ftags), fn::Symbol)
     return fn, RawKey(nm) # exotic name tag: generic keyeq match
 end
 
-# wrapper marking a name tag the fast matchers can't table-ize; _findspec
-# falls back to the classic keyeq contract for these (JIT only)
+# wrapper for a name tag the fast matchers can't turn into strings/symbols
+# ahead of time; _findspec compares these with `keyeq` at match time (JIT
+# only)
 struct RawKey
     x::Any
 end
@@ -587,7 +593,7 @@ function _tagname(@nospecialize(ftags), fn::Symbol)
     nm = getfield(ftags, :name)
     nm isa Symbol && return nm
     nm isa String && return Symbol(nm)
-    return nothing # exotic name tags (e.g. Tuple aliases) keep the classic path
+    return nothing # exotic name tags (e.g. Tuple aliases) match via _findspec
 end
 
 function _defaultfor(@nospecialize(defaults), fn::Symbol)
@@ -615,10 +621,12 @@ catch
     false
 end
 
-# per-type memo of which FIELDS carry their own make methods, for the hot
-# closures (computed in the runtime world at first use, so hooks defined any
-# time before a type's first parse are honored — a generated function's
-# frozen world cannot see them). JIT-only: trim builds never consult it.
+# Per-type memo of which FIELDS have their own `make` methods, consulted by
+# the hot closures. The lookup happens at first use rather than inside the
+# generated closure code: generated functions expand against the method
+# table as it existed when StructUtils loaded, so they can never see methods
+# a user (or another package) defines later. JIT-only; trim builds never
+# consult it.
 mutable struct _CustomFieldsMemo
     @atomic table::Dict{Type,Any} # UnionAll targets key here too (#54)
 end
@@ -713,8 +721,8 @@ function _construct_interp(style::StructStyle, tbl::FieldTable, slots::Vector{An
     specs = tbl.specs
     n = length(specs)
     defs = if !TRIM_BUILD && tbl.valsdefaults
-        # defaults referencing parsed fields (or bound type parameters):
-        # evaluate against the slots, exactly like the classic slow path
+        # defaults that reference other parsed fields (or bound type
+        # parameters) can only be computed now, against the filled slots
         fielddefaults(style, tbl.T, slots)
     elseif !TRIM_BUILD && tbl.anythunk
         _callthunk(tbl.defaultsthunk)
@@ -957,8 +965,8 @@ end
 
 function _findspec(specs::Vector{FieldSpec}, @nospecialize(k))
     if k isa Int
-        # positional sources (Vector/Tuple elements via applyeach): index is
-        # field order, matching the classic closures' `k == i` arm
+        # positional sources (Vector/Tuple elements via applyeach): the
+        # element index IS the field index
         return 1 <= k <= length(specs) ? k : 0
     elseif k isa Symbol
         for i = 1:length(specs)
@@ -1005,8 +1013,8 @@ function (f::InterpClosure{S})(@nospecialize(k), @nospecialize(v)) where {S}
     sp = @inbounds specs[i]
     vs = sp.spec
     if v === nothing && vs.kind != KIND_ANY && vs.kind != KIND_CUSTOM
-        # classic @_peel order: null-like sources take the Missing arm
-        # first when the field admits both
+        # a null-like source value fills a field that admits both Missing
+        # and Nothing with `missing` (same order @_peel resolves unions)
         if vs.missingable
             f.slots[i] = missing
         elseif vs.nullable
@@ -1019,9 +1027,10 @@ function (f::InterpClosure{S})(@nospecialize(k), @nospecialize(v)) where {S}
         end
         return defaultstate(f.style)
     elseif v === missing && vs.kind != KIND_ANY && vs.kind != KIND_CUSTOM
-        # classic @_peel parity: missing is null-like, Missing arm first.
-        # Kept as a separate branch with a CONSTANT third argument so the
-        # lift dispatch narrows to a single method under the verifier.
+        # `missing` fills the Missing arm first, like `nothing` above.
+        # Kept as its own branch so each lift call below has a constant
+        # third argument — a Union-typed argument would make the lift
+        # dispatch ambiguous in trimmed binaries.
         if vs.missingable
             f.slots[i] = missing
         elseif vs.nullable
@@ -1047,7 +1056,7 @@ function _interp_value(style::StructStyle, sp::FieldSpec, @nospecialize(v))
             _liftfail(vs.kind, sp.name)
         else
             # the 4-arg make with the field's resolved tags, so lift/
-            # choosetype/dateformat tags keep their classic semantics
+            # choosetype/dateformat tags behave exactly as documented
             x, _ = make(style, vs.declft::Type, v, sp.tags)
             return x
         end
@@ -1092,7 +1101,7 @@ function _spec_value(style::StructStyle, vs::ValueSpec, @nospecialize(v), name::
             return _spec_dict(style, vs, v, name)
         end
     elseif k == KIND_UNION2
-        # the classic arraylike-vs-scalar two-union rule, by source shape
+        # 2-union: an array-like source picks the array-like member
         arm = (v isa AbstractArray || v isa AbstractSet) ? (vs.child::ValueSpec) :
                                                            (vs.child2::ValueSpec)
         return _spec_nullwrap(style, arm, v, name)
@@ -1130,8 +1139,8 @@ function _spec_value(style::StructStyle, vs::ValueSpec, @nospecialize(v), name::
         if TRIM_BUILD
             _liftfail(k, name)
         else
-            # element/value-position generic arm: classic containers recurse
-            # through the tagless 3-arg make
+            # element/value position: hand the value to the tagless
+            # 3-arg make
             x, _ = make(style, vs.declft::Type, v)
             return x
         end
@@ -1144,14 +1153,15 @@ end
 # elements, union arms)
 function _spec_nullwrap(style::StructStyle, vs::ValueSpec, @nospecialize(v), name::String)
     if v === nothing && vs.kind != KIND_ANY && vs.kind != KIND_CUSTOM
-        # classic @_peel order: Missing arm first when both are admitted
+        # null-like values fill the Missing arm first when both are admitted
+        # (the same order @_peel resolves unions); two branches so each lift
+        # call has a constant third argument (see the closure above)
         vs.missingable && return missing
         vs.nullable && return nothing
         TRIM_BUILD && _liftfail(vs.kind, name)
         x, _ = lift(style, vs.ft, nothing)
         return x
     elseif v === missing && vs.kind != KIND_ANY && vs.kind != KIND_CUSTOM
-        # classic @_peel: missing is null-like, the Missing arm wins first
         vs.missingable && return missing
         vs.nullable && return nothing
         TRIM_BUILD && _liftfail(vs.kind, name)
@@ -1216,10 +1226,10 @@ function _spec_dict(style::StructStyle, vs::ValueSpec, @nospecialize(v), name::S
     return dict
 end
 
-# tuple targets: positional consumption — array sources by index, keyed/
-# iterable sources in encounter order (classic maketuple semantics); members
-# lift through their own specs, construction via the same boxed-slot ccall
-# (tuple types are struct-shaped for jl_new_structv)
+# tuple targets: positional fill — array sources by index, keyed/iterable
+# sources in encounter order; members lift through their own specs, and
+# construction uses the same boxed-slot ccall as structs (tuple types are
+# struct-shaped for jl_new_structv)
 function _spec_tuple(style::StructStyle, vs::ValueSpec, @nospecialize(v), name::String)
     members = vs.child::Vector{ValueSpec}
     n = length(members)
@@ -1236,8 +1246,8 @@ function _spec_tuple(style::StructStyle, vs::ValueSpec, @nospecialize(v), name::
         for ev in v
             k += 1
             if i >= n
-                # surplus positional elements: the style's hook decides
-                # (default ignores, matching the classic tuple closure)
+                # surplus positional elements go to the style's unknownfield
+                # hook (which ignores them by default)
                 unknownfield(style, vs.ft::DataType, k, ev)
                 continue
             end
@@ -1339,22 +1349,14 @@ _interpsource(@nospecialize(source)) =
 # under JIT (specializing on source here invites invalidation-recompile
 # blowups when extensions load mid-session)
 Base.@nospecializeinfer function _interp_make(style::StructStyle, @nospecialize(T::Type), @nospecialize(source))
-    if !(T isa DataType)
-        # incomplete parametric targets can't table; the specialized descent
-        # keeps generic semantics — NOT `make`: the make/_interp_make
-        # inference cycle sends constprop into a never-terminating compile.
-        # The assert keeps _interp_make's return type a Tuple so concrete
-        # call-site destructures stay statically resolvable (trim fails
-        # loudly at parse time).
+    # Targets the interpreter can't table — incomplete parametric types,
+    # mutables without an @noarg registration, defaults it can't re-evaluate
+    # — take the per-type hot path instead (calling back into `make` here
+    # would loop). The Tuple assert keeps this function's return type
+    # concrete enough for callers to destructure statically. Trim builds
+    # fail loudly: the hot path with a runtime-only type isn't compiled.
+    if !(T isa DataType && (tbl = fieldtable(T, style)).eligible)
         TRIM_BUILD && _liftfail(KIND_STRUCT, string(T))
-        return _hot_make3(style, T, source)::Tuple{Any,Any}
-    end
-    tbl = fieldtable(T, style)
-    if !tbl.eligible
-        # tables the interpreter can't drive (mutables without @noarg
-        # registration, thunked defaults with no thunk): the specialized
-        # descent owns them, same shape as the non-DataType arm above
-        TRIM_BUILD && _liftfail(KIND_STRUCT, String(nameof(tbl.T)))
         return _hot_make3(style, T, source)::Tuple{Any,Any}
     end
     return _interp_make(style, tbl, source)
@@ -1406,11 +1408,11 @@ function rootspec(@nospecialize(T::Type), style::StructStyle)
 end
 
 # entry for non-struct targets: run the spec tree over the source and wrap
-# in the (value, state) contract. @nospecializeinfer: the source-trait check
-# must stay a runtime verdict — folding `interpsource(::SomeLazy) = false`
-# at a dispatcher call site erases this arm and invites a pathological
-# constprop spiral through the mutually recursive make family (observed as
-# a never-terminating typed-parse compile in JSON's workload)
+# in the (value, state) contract. The un-specialized arguments keep the
+# source check below a runtime decision: if the compiler could prove its
+# answer at a call site it would delete this arm, and compiling the
+# mutually recursive make functions with arms deleted has hung the
+# compiler outright
 Base.@nospecializeinfer function _interp_root(style::StructStyle, @nospecialize(T::Type), @nospecialize(source))
     # lazy/positional format sources carry their own (value, pos) state
     # contract: the retained container machinery owns them
