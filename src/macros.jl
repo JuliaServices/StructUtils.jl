@@ -124,7 +124,7 @@ function _hot_exprs(T, samples...)
         :(function StructUtils.make(style::StructUtils.StructStyle, ::Type{S}, source, tags) where {S<:$T}
             StructUtils._hot_entry(style, S, source, tags)
         end),
-        :(StructUtils._hot_precompile!($T, ($(samples...),))),
+        :(StructUtils.hot_precompile!($T, ($(samples...),))),
     ]
 end
 

@@ -76,9 +76,9 @@ StructUtils.@hot HPlain
     hook = (T, samples) -> (fired[] += 1; nothing)
     StructUtils.register_hot_hook!(hook)
     try
-        StructUtils._hot_precompile!(HotTier; force=true)
+        StructUtils.hot_precompile!(HotTier; force=true)
         @test fired[] == 1
-        StructUtils._hot_precompile!(HotEvent, ("{}",); force=true)
+        StructUtils.hot_precompile!(HotEvent, ("{}",); force=true)
         @test fired[] == 2
     finally
         pop!(StructUtils.HOT_HOOKS)

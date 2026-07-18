@@ -29,13 +29,15 @@ const HOT_HOOKS = Any[]
 Register a format-side precompile hook. During downstream package
 precompilation, each `:hot`-annotated struct definition calls
 `f(T, samples::Tuple)` inside a newly-inferred-tagging block, so everything
-the hook compiles (e.g. a typed JSON parse of `T`) is cached in the defining
+the hook compiles (a format's typed parse of `T`, say) is cached in the defining
 package's image. Register from `__init__` (the registry is runtime state).
 Hooks must swallow their own errors.
 """
 register_hot_hook!(@nospecialize(f)) = (push!(HOT_HOOKS, f); nothing)
 
-function _hot_precompile!(@nospecialize(T::Type), samples::Tuple=(); force::Bool=false)
+# run the registered hooks for a `:hot` type — during precompilation of the
+# defining package normally, or immediately under `force` (the test path)
+function hot_precompile!(@nospecialize(T::Type), samples::Tuple=(); force::Bool=false)
     if force
         # test path: run the hooks without precompile tagging
         _hot_workload(T, samples)
@@ -58,6 +60,7 @@ function _hot_precompile!(@nospecialize(T::Type), samples::Tuple=(); force::Bool
     return nothing
 end
 
+# the compile workload itself: a tree-source make plus every registered hook
 function _hot_workload(@nospecialize(T::Type), samples::Tuple)
     try
         # baseline: compile the tree descent; a required-field error is
@@ -91,6 +94,8 @@ function _hot_field(style::StructStyle, ::Type{T}, source, tags) where {T}
     end
 end
 
+# the per-type 3-arg make: same trait ladder as the generic dispatcher,
+# every arm specialized on T
 function _hot_make3(style::StructStyle, ::Type{T}, source) where {T}
     if abstractcollectionpassthrough(style, T, source)
         return source, defaultstate(style)
@@ -127,16 +132,20 @@ struct HotStructClosure{T,A,S,FS,FSS,FT,CMF}
     cmf::CMF # per-field: the type carries its own make methods (JIT only)
 end
 
-HotStructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FSS} =
-    (ftags = _fieldtagtuple(style, T, fsyms);
-     cmf = TRIM_BUILD ? nothing : _custom_make_fields(T);
-     HotStructClosure{T,A,S,FS,FSS,typeof(ftags),typeof(cmf)}(vals, style, fsyms, fstrs, ftags, cmf))
+# the cmf tuple records, per field, whether the field's type declares its
+# own make methods (`custommake`); with `T` concrete these trait calls fold
+# to constants when this constructor compiles
+function HotStructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FSS}
+    ftags = _fieldtagtuple(style, T, fsyms)
+    cmf = TRIM_BUILD ? nothing : ntuple(i -> custommake(fieldtype(T, i)), Val(fieldcount(T)))
+    return HotStructClosure{T,A,S,FS,FSS,typeof(ftags),typeof(cmf)}(vals, style, fsyms, fstrs, ftags, cmf)
+end
 
 # Generated so each field gets a literal index and a literal field type —
 # looping over `i` at runtime would make `fieldtype(T, i)` abstract, and an
 # abstractly-typed field call cannot be compiled ahead of time for trimmed
 # binaries. Two dispatch paths per field: types with their OWN `make`
-# methods (raw-capture types like JSON's JSONText, `@choosetype` overrides)
+# methods (raw-capture types, `@choosetype` overrides — see `custommake`)
 # must go through the 4-arg `make` so those hooks fire before any union
 # handling; everything else takes the direct field path. That verdict rides
 # the closure (f.cmf) rather than being decided here, because this
@@ -198,6 +207,7 @@ Base.@nospecializeinfer @noinline _make_override(style::StructStyle, @nospeciali
 
 (f::HotStructClosure{T,A,S,FS,FSS,FT,CMF})(k, v) where {T,A,S,FS,FSS,FT,CMF} = _hot_findfield(T, k, v, f)
 
+# applyeach closure appending made elements to an array
 struct HotArrayClosure{T,S}
     arr::T
     style::S
@@ -209,6 +219,7 @@ function (f::HotArrayClosure{T,S})(_, v) where {T,S}
     return st
 end
 
+# applyeach closure inserting made key/value pairs into a dict
 struct HotDictClosure{T,S}
     dict::T
     style::S
@@ -220,6 +231,7 @@ function (f::HotDictClosure{T,S})(k, v) where {T,S}
     return st
 end
 
+# struct targets: fill a slot buffer via the field closure, then construct
 function _hot_makestruct(style::StructStyle, ::Type{T}, source) where {T}
     vals = mem(fieldcount(T))
     fsyms = fieldnamesymbols(T)
@@ -232,6 +244,7 @@ function _hot_makestruct(style::StructStyle, ::Type{T}, source) where {T}
     end
 end
 
+# mutable targets: set fields on the given instance via the field closure
 function _hot_makenoarg(style::StructStyle, y::T, source) where {T}
     fsyms = fieldnamesymbols(T)
     fstrs = fieldnamestrings(T)
@@ -239,6 +252,7 @@ function _hot_makenoarg(style::StructStyle, y::T, source) where {T}
     return y, st
 end
 
+# array targets: append each made element
 function _hot_makearray(style::StructStyle, x::T, source) where {T}
     st = applyeach(style, HotArrayClosure(x, style), source)
     return x, st
@@ -247,6 +261,7 @@ end
 _hot_makedict(style::StructStyle, ::Type{T}, source) where {T} =
     _hot_makedict(style, initialize(style, T, source), source)
 
+# dict targets: insert each made key/value pair
 function _hot_makedict(style::StructStyle, dict::T, source) where {T}
     st = applyeach(style, HotDictClosure(dict, style), source)
     return dict, st
@@ -263,6 +278,7 @@ function _hot_entry(style::StructStyle, ::Type{T}, source) where {T}
     return _hot_make3(style, T, source)
 end
 
+# 4-arg entry: resolve a choosetype tag first, then route as above
 function _hot_entry(style::StructStyle, ::Type{T}, source, tags) where {T}
     if haskey(tags, :choosetype)
         return make(style, tags.choosetype(source), source, _delete(tags, :choosetype))
@@ -282,7 +298,7 @@ you don't own — vendored API types being the typical case). Equivalent to
 defining the struct with `@kwarg :hot struct ...`: emits fully-specialized
 `make` methods for `T` and triggers precompile-time compilation through the
 hot-hook registry. Optional sample strings are handed to format hooks (e.g.
-JSON parses each sample against `T` during precompilation).
+a format package parses each sample against `T` during precompilation).
 """
 macro hot(T, samples...)
     ex = Expr(:block,

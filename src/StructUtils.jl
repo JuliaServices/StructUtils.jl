@@ -5,6 +5,33 @@ using Preferences, PrecompileTools
 
 export @noarg, @defaults, @tags, @kwarg, @nonstruct, Selectors
 
+# The documented-but-unexported surface. Everything a format package needs
+# to drive the interpreter itself is declared here; the
+# leading-underscore names that remain are internal and may change.
+@static if VERSION >= v"1.11"
+    eval(Expr(:public,
+        :make, :make!, :reset!, :lift, :lower, :lowerkey, :liftkey,
+        :fieldtags, :fielddefaults, :custommake,
+        :dictlike, :arraylike, :structlike, :nulllike, :noarg,
+        :applyeach, :applylength, :initialize, :unknownfield, :keyeq,
+        :StructStyle, :DefaultStyle, :EarlyReturn, :defaultstate,
+        :fieldtagkey, :abstractcollectionpassthrough,
+        :fieldtable, :rootspec, :construct, :makevalue, :liftleaf,
+        :findspec, :allocvector,
+        :FieldTable, :FieldSpec, :ValueSpec,
+        :interpready, :interpsource, :register_fieldtable!,
+        :ishot, :register_hot_hook!, :hot_precompile!,
+        :TRIM_BUILD,
+        :KIND_UNSUPPORTED, :KIND_STRING, :KIND_INT64, :KIND_INT32,
+        :KIND_INT16, :KIND_INT8, :KIND_INT128, :KIND_UINT64, :KIND_UINT32,
+        :KIND_UINT16, :KIND_UINT8, :KIND_UINT128, :KIND_FLOAT64,
+        :KIND_FLOAT32, :KIND_FLOAT16, :KIND_BOOL, :KIND_DATE,
+        :KIND_DATETIME, :KIND_TIME, :KIND_UUID, :KIND_SYMBOL, :KIND_CHAR,
+        :KIND_ANY, :KIND_STRUCT, :KIND_VECTOR, :KIND_DICT, :KIND_UNION2,
+        :KIND_CUSTOM, :KIND_TUPLE, :KIND_FIXEDARRAY, :KIND_SETLIKE,
+    ))
+end
+
 # Set `trim_build = true` in an app's LocalPreferences.toml when building it
 # with `juliac --trim`. A trimmed binary has no JIT, so any code path that
 # resolves methods at runtime cannot exist in it — this constant compiles
@@ -182,6 +209,20 @@ using the StructUtils.jl macros: `@tags`, `@noarg`, `@defaults`, or `@kwarg`.
 Note this function returns the tags of *all* fields as a single NamedTuple.
 """
 function fieldtags end
+
+"""
+    StructUtils.custommake(::Type{T}) -> Bool
+
+Declare that `T` has its own `make` methods that must run whenever a value
+of type `T` is built — including when `T` appears as a field of another
+struct. Field values of such types are passed through full `make` dispatch
+instead of the field-table fast paths. `@choosetype` declares this
+automatically for its target type; declare it manually alongside any
+hand-written `make(::StructStyle, ::Type{T}, source)` method intended for
+field positions.
+"""
+custommake(::Type) = false
+
 
 fieldtags(::StructStyle, T::Type)::NamedTuple{(),Tuple{}} = (;)
 
@@ -1281,6 +1322,7 @@ x = StructUtils.make(Vehicle, Dict("type" => "car", "make" => "Toyota", "model" 
 """
 macro choosetype(T, ex)
     esc(quote
+        StructUtils.custommake(::Type{$T}) = true
         function StructUtils.make(st::StructUtils.StructStyle, ::Type{$T}, source, tags)
             func = $(ex)
             StructUtils.make(st, applicable(func, source, tags) ? func(source, tags) : func(source), source, tags)
@@ -1294,6 +1336,7 @@ end
 
 macro choosetype(style, T, ex)
     esc(quote
+        StructUtils.custommake(::Type{$T}) = true
         function StructUtils.make(st::$(style), ::Type{$T}, source, tags)
             func = $(ex)
             StructUtils.make(st, applicable(func, source, tags) ? func(source, tags) : func(source), source, tags)
