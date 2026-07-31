@@ -231,6 +231,53 @@ end
     data::String
 end
 
+@nonstruct struct NonStructMapping
+    value::Any
+end
+
+StructUtils.lift(::Type{NonStructMapping}, value) = NonStructMapping(value)
+StructUtils.lower(value::NonStructMapping) = value.value
+
+struct NonStructMappingHolder
+    value::NonStructMapping
+end
+
+struct NonStructMappingTarget
+    leaf::Int
+end
+
+abstract type AbstractNonStructMappingTarget end
+
+struct ConcreteNonStructMappingTarget <: AbstractNonStructMappingTarget
+    leaf::Int
+end
+
+StructUtils.@choosetype AbstractNonStructMappingTarget source -> begin
+    source isa NonStructMapping || error("expected the raw non-struct source")
+    ConcreteNonStructMappingTarget
+end
+
+mutable struct NonStructMappingStyle <: StructUtils.StructStyle
+    lower_calls::Int
+end
+
+function StructUtils.lower(style::NonStructMappingStyle, value::NonStructMapping)
+    style.lower_calls += 1
+    return value.value
+end
+
+struct NonStructCustomMakeTarget
+    saw_raw_source::Bool
+end
+
+function StructUtils.make(
+    style::NonStructMappingStyle,
+    ::Type{NonStructCustomMakeTarget},
+    source::NonStructMapping,
+)
+    return NonStructCustomMakeTarget(true), StructUtils.defaultstate(style)
+end
+
 struct Q
     id::Int
     value::MIME

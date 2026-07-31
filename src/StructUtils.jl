@@ -957,15 +957,23 @@ function make(style::StructStyle, T::Type, source)
         end
     end
     if T <: Tuple
-        return maketuple(style, T, source)
+        return maketuple(style, T, lower(style, source))
     elseif dictlike(style, T)
-        return makedict(style, T, source)
+        lowered = lower(style, source)
+        if abstractcollectionpassthrough(style, T, lowered)
+            return lowered, defaultstate(style)
+        end
+        return makedict(style, T, lowered)
     elseif arraylike(style, T)
-        return makearray(style, T, source)
+        lowered = lower(style, source)
+        if abstractcollectionpassthrough(style, T, lowered)
+            return lowered, defaultstate(style)
+        end
+        return makearray(style, T, lowered)
     elseif noarg(style, T)
-        return makenoarg(style, T, source)
+        return makenoarg(style, T, lower(style, source))
     elseif structlike(style, T)
-        return makestruct(style, T, source)
+        return makestruct(style, T, lower(style, source))
     else
         return lift(style, T, source)
     end

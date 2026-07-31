@@ -408,6 +408,46 @@ end
     @test !StructUtils.structlike(StructUtils.DefaultStyle(), NonStructComplex)
 end
 
+@testset "@nonstruct representation in make: #29" begin
+    mapping = Dict{String,Any}("leaf" => 1)
+    value = NonStructMapping(mapping)
+
+    # Root values use the same representation as values nested in a source.
+    @test StructUtils.make(Dict{String,Any}, value) == mapping
+    @test StructUtils.make(NonStructMappingTarget, value) == NonStructMappingTarget(1)
+
+    @test StructUtils.make(
+        Dict{String,Any},
+        NonStructMappingHolder(value),
+    ) == Dict{String,Any}("value" => mapping)
+    @test StructUtils.make(Vector{Any}, Any[value]) == Any[mapping]
+    @test StructUtils.make(
+        Dict{String,Any},
+        Dict{String,Any}("value" => value),
+    ) == Dict{String,Any}("value" => mapping)
+
+    # Lowering may produce a concrete value satisfying an abstract target.
+    @test StructUtils.make(AbstractDict, value) === mapping
+    @test StructUtils.make(
+        AbstractNonStructMappingTarget,
+        value,
+    ) == ConcreteNonStructMappingTarget(1)
+
+    # Style-specific lowering is honored exactly once at the root.
+    style = NonStructMappingStyle(0)
+    @test StructUtils.make(Dict{String,Any}, value, style) == mapping
+    @test style.lower_calls == 1
+
+    # A target-owned make hook still receives the raw source.
+    hook_style = NonStructMappingStyle(0)
+    made = StructUtils.make(NonStructCustomMakeTarget, value, hook_style)
+    @test made.saw_raw_source
+    @test hook_style.lower_calls == 0
+
+    # Making a non-struct target continues to use lift on the raw source.
+    @test StructUtils.make(NonStructMapping, mapping).value === mapping
+end
+
 @testset "Set make: #13" begin
     @test StructUtils.make(Set{Symbol}, Any["FACTOR"]) == Set{Symbol}([:FACTOR])
 end
