@@ -41,11 +41,42 @@ function StructUtils.fieldtags(st::PerFieldTagStyle, ::Type{PerFieldTagged}, fie
     return (;)
 end
 
+struct SemanticKey
+    name::String
+end
+
+Base.string(key::SemanticKey) = key.name
+Base.hash(::SemanticKey, h::UInt) = hash(0x5a17, h)
+
+struct WideHashTarget
+    f1::Int
+    f2::Int
+    f3::Int
+    f4::Int
+    f5::Int
+    f6::Int
+    f7::Int
+    f8::Int
+    f9::Int
+    f10::Int
+    f11::Int
+    f12::Int
+    f13::Int
+    f14::Int
+    f15::Int
+    f16::Int
+end
+
 include(joinpath(dirname(pathof(StructUtils)), "../test/macros.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/struct.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/selectors.jl"))
 
 @testset "StructUtils" begin
+
+# A custom key can define semantic String conversion without sharing String's
+# hash. Wide field lookup must retain the linear `keyeq` fallback for it.
+wide_custom_keys = Dict(SemanticKey("f$i") => i for i in 1:16)
+@test StructUtils.make(WideHashTarget, wide_custom_keys) == WideHashTarget(1:16...)
 
 # Dict{Symbol, Int}, NamedTuple, A struct, Vector Pair
 d = Dict(:a => 1, :b => 2, :c => 3, :d => 4)

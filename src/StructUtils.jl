@@ -157,7 +157,10 @@ end
 
 @generated function _fieldtagtuple(st::StructStyle, ::Type{T}, fsyms) where {T}
     n = fieldcount(T)
-    vals = [:(_fieldtag(st, ft, $(QuoteNode(fieldname(T, i))))) for i = 1:n]
+    vals = Vector{Any}(undef, n)
+    for i in 1:n
+        vals[i] = :(_fieldtag(st, ft, $(QuoteNode(fieldname(T, i)))))
+    end
     return quote
         Base.@_inline_meta
         ft = fieldtags(st, T)
@@ -171,7 +174,10 @@ end
 
 @generated function _fieldtagtuple_public(st::StructStyle, ::Type{T}, fsyms) where {T}
     n = fieldcount(T)
-    vals = [:(fieldtags(st, T, $(QuoteNode(fieldname(T, i))))) for i = 1:n]
+    vals = Vector{Any}(undef, n)
+    for i in 1:n
+        vals[i] = :(fieldtags(st, T, $(QuoteNode(fieldname(T, i)))))
+    end
     return quote
         Base.@_inline_meta
         return ($(vals...),)
@@ -674,6 +680,11 @@ keyeq(a, b::Tuple) = any(keyeq(a), b)
 keyeq(a, b) = isequal(a, b)
 keyeq(x) = y -> keyeq(x, y)
 
+# Hash lookup is valid only when a source key opts in to the same value hash
+# contract as String. Other key types keep the full `keyeq` fallback below.
+_keyhash(::Any) = nothing
+_keyhash(x::AbstractString) = hash(x, UInt(0))
+
 macro _f(i)
     esc(:(x = f($i); x isa EarlyReturn && return x.value))
 end
@@ -782,8 +793,9 @@ function (f::MultiDimClosure{S,A})(i::Int, val) where {S,A}
         st = applyeach(f, f.style, val)
         f.cur_dim[] += 1
     else
-        val, st = make(f.style, eltype(f.arr), val)
-        setindex!(f.arr, val, f.dims...)
+        result = _boxedmake(f.style, eltype(f.arr), val)
+        setindex!(f.arr, result.value, f.dims...)
+        st = result.state
     end
     return st
 end
@@ -826,6 +838,27 @@ to influence the construction of the struct.
 """
 function make end
 
+# Recursive construction normally returns `Tuple{T, State}`. For a deeply
+# nested target, propagating those concrete return types through every caller
+# can make inference grow with the whole target graph. Keep recursive results
+# behind a fixed, non-parametric boundary. The concrete value is recovered at
+# the final constructor or collection insertion, where the target type is
+# already known.
+struct MakeResult
+    value::Any
+    state::Any
+end
+
+Base.@constprop :none @noinline function _boxedmake(style, ::Type{T}, source)::MakeResult where {T}
+    value, state = make(style, T, source)
+    return MakeResult(value, state)
+end
+
+Base.@constprop :none @noinline function _boxedmake(style, ::Type{T}, source, tags)::MakeResult where {T}
+    value, state = make(style, T, source, tags)
+    return MakeResult(value, state)
+end
+
 function make(::Type{T}, source, style::StructStyle=DefaultStyle()) where {T}
     x, _ = make(style, T, source)
     return x
@@ -846,7 +879,7 @@ end
 @inline abstractcollectionpassthrough(style::StructStyle, ::Type{T}, source) where {T} =
     isabstracttype(T) && source isa T && (dictlike(style, T) || arraylike(style, T))
 
-function make(style::StructStyle, T::Type, source, tags)
+function make(style::StructStyle, ::Type{T}, source, tags) where {T}
     if haskey(tags, :choosetype)
         return make(style, tags.choosetype(source), source, _delete(tags, :choosetype))
     end
@@ -904,7 +937,7 @@ function make(style::StructStyle, T::Type, source, tags)
     end
 end
 
-function make(style::StructStyle, T::Type, source)
+function make(style::StructStyle, ::Type{T}, source) where {T}
     if abstractcollectionpassthrough(style, T, source)
         return source, defaultstate(style)
     end
@@ -1007,17 +1040,17 @@ function (f::TupleClosure{T,A,S})(k, v) where {T,A,S}
     st = _foreach(T) do i
         if typeof(k) == Int
             if k == i
-                intval, intst = make(f.style, fieldtype(T, i), v)
-                @inbounds f.vals[i] = intval
-                return EarlyReturn(_MatchedState(intst))
+                result = _boxedmake(f.style, fieldtype(T, i), v)
+                @inbounds f.vals[i] = result.value
+                return EarlyReturn(_MatchedState(result.state))
             end
         else
             j = unsafe_load(f.i)
             if j == i
                 unsafe_store!(f.i, i + 1)
-                elseval, elsest = make(f.style, fieldtype(T, i), v)
-                @inbounds f.vals[i] = elseval
-                return EarlyReturn(_MatchedState(elsest))
+                result = _boxedmake(f.style, fieldtype(T, i), v)
+                @inbounds f.vals[i] = result.value
+                return EarlyReturn(_MatchedState(result.state))
             end
         end
     end
@@ -1040,9 +1073,9 @@ struct DictClosure{T,S}
 end
 
 function (f::DictClosure{T,S})(k, v) where {T,S}
-    val, st = make(f.style, _valtype(f.dict), v)
-    addkeyval!(f.dict, liftkey(f.style, _keytype(f.dict), k), val)
-    return st
+    result = _boxedmake(f.style, _valtype(f.dict), v)
+    addkeyval!(f.dict, liftkey(f.style, _keytype(f.dict), k), result.value)
+    return result.state
 end
 
 makedict(style, ::Type{T}, source) where {T} = makedict(style, initialize(style, T, source), source)
@@ -1058,9 +1091,9 @@ struct ArrayClosure{T,S}
 end
 
 function (f::ArrayClosure{T,S})(_, v) where {T,S}
-    val, st = make(f.style, eltype(f.arr), v)
-    push!(f.arr, val)
-    return st
+    result = _boxedmake(f.style, eltype(f.arr), v)
+    push!(f.arr, result.value)
+    return result.state
 end
 
 struct FixedArrayClosure{A,S}
@@ -1070,11 +1103,11 @@ struct FixedArrayClosure{A,S}
 end
 
 function (f::FixedArrayClosure{A,S})(_, v) where {A,S}
-    val, st = make(f.style, eltype(f.arr), v)
+    result = _boxedmake(f.style, eltype(f.arr), v)
     i = f.idx[]
-    @inbounds f.arr[i] = val
+    @inbounds f.arr[i] = result.value
     f.idx[] = i + 1
-    return st
+    return result.state
 end
 
 function makearray(style, ::Type{T}, source) where {T}
@@ -1112,27 +1145,71 @@ function makearray(style, x::T, source) where {T}
     end
 end
 
-@generated function fieldnamestrings(::Type{T}) where {T}
-    :($(Tuple(String(fieldname(T, i)) for i in 1:fieldcount(T))))
+"""
+Immutable structural facts for a target type. This descriptor depends only on
+the type layout. Style-derived tags and defaults remain per-construction data.
+"""
+struct StructSchema{N,M}
+    symbols::NTuple{N,Symbol}
+    strings::NTuple{N,String}
+    hashes::NTuple{M,UInt}
+    indices::NTuple{M,Int}
 end
 
-@generated function fieldnamesymbols(::Type{T}) where {T}
-    :($(Tuple(fieldname(T, i) for i in 1:fieldcount(T))))
+@generated function structschema(::Type{T}) where {T}
+    symbols = fieldnames(T)
+    strings = map(String, symbols)
+    table_size = 0
+    if length(symbols) >= 16
+        table_size = 1
+        while table_size < 2 * length(symbols)
+            table_size <<= 1
+        end
+    end
+    hashes = fill(UInt(0), table_size)
+    indices = fill(0, table_size)
+    for i in eachindex(strings)
+        table_size == 0 && break
+        hash_value = hash(strings[i], UInt(0))
+        slot = Int(hash_value & UInt(table_size - 1)) + 1
+        while indices[slot] != 0
+            slot = slot == table_size ? 1 : slot + 1
+        end
+        hashes[slot] = hash_value
+        indices[slot] = i
+    end
+    return :(StructSchema(
+        $(QuoteNode(symbols)),
+        $(QuoteNode(strings)),
+        $(QuoteNode(Tuple(hashes))),
+        $(QuoteNode(Tuple(indices))),
+    ))
 end
 
-struct StructClosure{T,A,S,FS,FSS,FT}
+struct StructClosure{T,A,S,SC,FT}
     vals::A # Memory{Any} for structs, T for mutable structs
     style::S
-    fsyms::FS
-    fstrs::FSS
+    schema::SC
     ftags::FT
+    hasrenames::Bool
 end
 
-StructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FSS} =
-    StructClosure{T}(vals, style, fsyms, fstrs, _fieldtagtuple(style, T, fsyms))
+function StructClosure{T}(vals::A, style::S, schema::SC) where {T,A,S,SC}
+    ftags = _fieldtagtuple(style, T, schema.symbols)
+    return StructClosure{T}(vals, style, schema, ftags)
+end
 
-StructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS, ftags::FT) where {T,A,S,FS,FSS,FT} =
-    StructClosure{T,A,S,FS,FSS,FT}(vals, style, fsyms, fstrs, ftags)
+function _hasfieldrenames(ftags)
+    for tags in ftags
+        haskey(tags, :name) && return true
+    end
+    return false
+end
+
+function StructClosure{T}(vals::A, style::S, schema::SC, ftags::FT) where {T,A,S,SC,FT}
+    hasrenames = _hasfieldrenames(ftags)
+    return StructClosure{T,A,S,SC,FT}(vals, style, schema, ftags, hasrenames)
+end
 
 if VERSION < v"1.11"
     setval!(vals::Vector{Any}, x, i) = @inbounds vals[i] = x
@@ -1142,47 +1219,232 @@ end
 
 setval!(vals::T, x, i) where {T} = _setfield!(vals, i, x)
 
-function findfield(::Type{T}, k, v, f) where {T}
-    st = _foreach(T) do i
-        if typeof(k) == Symbol
-            fn = f.fsyms[i]
-            ftags = f.ftags[i]
-            field = get(ftags, :name, fn)
-            if keyeq(k, field) || keyeq(k, fn)
-                symval, symst = make(f.style, fieldtype(T, i), v, ftags)
-                setval!(f.vals, symval, i)
-                return EarlyReturn(_MatchedState(symst))
-            end
-        elseif typeof(k) == Int
-            if k == i
-                ftags = f.ftags[i]
-                intval, intst = make(f.style, fieldtype(T, i), v, ftags)
-                setval!(f.vals, intval, i)
-                return EarlyReturn(_MatchedState(intst))
-            end
-        else
-            fn = f.fsyms[i]
-            fstr = f.fstrs[i]
-            ftags = f.ftags[i]
-            field = get(ftags, :name, fstr)
-            if keyeq(k, field)
-                strval, strst = make(f.style, fieldtype(T, i), v, ftags)
-                setval!(f.vals, strval, i)
-                return EarlyReturn(_MatchedState(strst))
-            end
+@inline function hashfieldindex(k, schema)
+    table_size = length(schema.indices)
+    table_size == 0 && return 0
+    hash_value = _keyhash(k)
+    hash_value === nothing && return 0
+    slot = Int(hash_value & UInt(table_size - 1)) + 1
+    for _ in 1:table_size
+        i = @inbounds schema.indices[slot]
+        i == 0 && return 0
+        if @inbounds(schema.hashes[slot]) == hash_value && keyeq(k, @inbounds(schema.strings[i]))
+            return i
         end
+        slot = slot == table_size ? 1 : slot + 1
     end
-    return st isa _MatchedState ? st.value : unknownfield(f.style, T, k, v)
+    return 0
 end
 
-(f::StructClosure{T,A,S,FS,FSS,FT})(k, v) where {T,A,S,FS,FSS,FT} = findfield(T, k, v, f)
+@noinline function findfieldindex(k, f)
+    if typeof(k) == Symbol
+        for i in eachindex(f.schema.symbols)
+            tags = @inbounds f.ftags[i]
+            name = @inbounds f.schema.symbols[i]
+            field = get(tags, :name, name)
+            (keyeq(k, field) || keyeq(k, name)) && return i
+        end
+    elseif typeof(k) == Int
+        1 <= k <= length(f.schema.symbols) && return k
+    else
+        if !f.hasrenames
+            i = hashfieldindex(k, f.schema)
+            i != 0 && return i
+        end
+        for i in eachindex(f.schema.strings)
+            tags = @inbounds f.ftags[i]
+            name = @inbounds f.schema.strings[i]
+            field = get(tags, :name, name)
+            keyeq(k, field) && return i
+        end
+    end
+    return 0
+end
+
+@generated function _makefield!(::Type{T}, ::Val{I}, v, f) where {T,I}
+    1 <= I <= fieldcount(T) || return :(throw(BoundsError(T, I)))
+    field_type = fieldtype(T, I)
+    if ismutabletype(T)
+        # `setfield!` needs the concrete field value to remain visible to trim
+        # verification. Immutable construction can use the boxed recursion
+        # barrier because `_construct` asserts each field type.
+        return quote
+            Base.@_noinline_meta
+            value, state = make(f.style, $(QuoteNode(field_type)), v, @inbounds(f.ftags[$I]))
+            setval!(f.vals, value, $I)
+            return state
+        end
+    end
+    return quote
+        Base.@_noinline_meta
+        result = Base.inferencebarrier(
+            _boxedmake(f.style, $(QuoteNode(field_type)), v, @inbounds(f.ftags[$I])),
+        )::MakeResult
+        setval!(f.vals, result.value, $I)
+        return result.state
+    end
+end
+
+@generated function _makefieldgroup!(
+    ::Type{T},
+    ::Type{F},
+    ::Type{Tag},
+    i::Int,
+    v,
+    f,
+) where {T,F,Tag}
+    if ismutabletype(T)
+        return quote
+            Base.@_noinline_meta
+            tags = @inbounds(f.ftags[i])::Tag
+            value, state = make(f.style, F, v, tags)
+            setval!(f.vals, value::F, i)
+            return state
+        end
+    end
+    return quote
+        Base.@_noinline_meta
+        tags = @inbounds(f.ftags[i])::Tag
+        result = Base.inferencebarrier(_boxedmake(f.style, F, v, tags))::MakeResult
+        setval!(f.vals, result.value, i)
+        return result.state
+    end
+end
+
+@generated function makefield!(
+    ::Type{T},
+    i::Int,
+    v,
+    f::StructClosure{T,A,S,SC,FT},
+) where {T,A,S,SC,FT}
+    nfields = fieldcount(T)
+
+    # Small structs use literal field branches. They are cheap to compile and
+    # keep each concrete field type visible to trim verification.
+    if nfields < 16
+        branches = Expr(:block)
+        for field_index in 1:nfields
+            push!(branches.args, quote
+                if i == $field_index
+                    return Base.inferencebarrier(_makefield!(T, Val($field_index), v, f))
+                end
+            end)
+        end
+        return quote
+            Base.@_noinline_meta
+            $branches
+            throw(BoundsError(T, i))
+        end
+    end
+
+    # Wide structs group fields that share the same concrete value and tag
+    # types. The runtime lookup is one tuple index plus one branch per unique
+    # group. A homogeneous target therefore has no linear membership test.
+    group_types = Tuple{Any,Any}[]
+    group_fields = Vector{Int}[]
+    group_ids = Vector{Int}(undef, nfields)
+    for field_index in 1:nfields
+        key = (fieldtype(T, field_index), fieldtype(FT, field_index))
+        group_id = 0
+        for candidate in eachindex(group_types)
+            if group_types[candidate] == key
+                group_id = candidate
+                break
+            end
+        end
+        if group_id == 0
+            push!(group_types, key)
+            push!(group_fields, Int[])
+            group_id = length(group_types)
+        end
+        push!(group_fields[group_id], field_index)
+        group_ids[field_index] = group_id
+    end
+
+    function groupcall(group_id)
+        field_type, tag_type = group_types[group_id]
+        indices = group_fields[group_id]
+        if length(indices) == 1
+            field_index = only(indices)
+            return :(Base.inferencebarrier(_makefield!(T, Val($field_index), v, f)))
+        end
+        return :(Base.inferencebarrier(
+            _makefieldgroup!(
+                T,
+                $(QuoteNode(field_type)),
+                $(QuoteNode(tag_type)),
+                i,
+                v,
+                f,
+            ),
+        ))
+    end
+
+    boundscheck = :(1 <= i <= $nfields || throw(BoundsError(T, i)))
+    if length(group_types) == 1
+        call = groupcall(1)
+        return quote
+            Base.@_noinline_meta
+            $boundscheck
+            return $call
+        end
+    end
+
+    branches = Expr(:block)
+    for group_id in eachindex(group_types)
+        call = groupcall(group_id)
+        push!(branches.args, quote
+            if group_id == $group_id
+                return $call
+            end
+        end)
+    end
+    group_table = QuoteNode(Tuple(group_ids))
+    return quote
+        Base.@_noinline_meta
+        $boundscheck
+        group_id = @inbounds $group_table[i]
+        $branches
+        throw(BoundsError(T, i))
+    end
+end
+
+@generated function findfield(::Type{T}, k::Symbol, v, f) where {T}
+    checks = Expr(:block)
+    for i in 1:fieldcount(T)
+        push!(checks.args, quote
+            tags = @inbounds f.ftags[$i]
+            name = @inbounds f.schema.symbols[$i]
+            field = get(tags, :name, name)
+            if keyeq(k, field) || keyeq(k, name)
+                return _makefield!(T, Val($i), v, f)
+            end
+        end)
+    end
+    return quote
+        $checks
+        return unknownfield(f.style, T, k, v)
+    end
+end
+
+@noinline function findfield(::Type{T}, k, v, f) where {T}
+    i = findfieldindex(k, f)
+    return i == 0 ? unknownfield(f.style, T, k, v) : makefield!(T, i, v, f)
+end
+
+# Keep source traversal independent from the target lookup and dispatcher. This
+# prevents parsers from inlining the whole field program into their object loop.
+@inline (f::StructClosure{T,A,S,SC,FT})(k::Symbol, v) where {T,A,S,SC,FT} = findfield(T, k, v, f)
+
+@noinline function (f::StructClosure{T,A,S,SC,FT})(k, v) where {T,A,S,SC,FT}
+    return Base.inferencebarrier(findfield(T, k, v, f))
+end
 
 @inline makenoarg(style, ::Type{T}, source) where {T} = makenoarg(style, initialize(style, T, source), source)
 
 function makenoarg(style, y::T, source) where {T}
-    fsyms = fieldnamesymbols(T)
-    fstrs = fieldnamestrings(T)
-    st = applyeach(style, StructClosure{T}(y, style, fsyms, fstrs), source)
+    schema = structschema(T)
+    st = applyeach(style, StructClosure{T}(y, style, schema), source)
     return y, st
 end
 
@@ -1206,13 +1468,12 @@ end
 
 function makestruct(style, ::Type{T}, source) where {T}
     vals = mem(fieldcount(T))
-    fsyms = fieldnamesymbols(T)
-    fstrs = fieldnamestrings(T)
-    st = applyeach(style, StructClosure{T}(vals, style, fsyms, fstrs), source)
+    schema = structschema(T)
+    st = applyeach(style, StructClosure{T}(vals, style, schema), source)
     if T <: NamedTuple
         return T(_tuple(T, vals, style)), st
     else
-        return _construct(T, vals, style, fsyms), st
+        return _construct(T, vals, style, schema.symbols), st
     end
 end
 
