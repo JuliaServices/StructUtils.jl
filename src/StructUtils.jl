@@ -156,26 +156,27 @@ function _fieldtag(st::StructStyle, ft, field)
 end
 
 @generated function _fieldtagtuple(st::StructStyle, ::Type{T}, fsyms) where {T}
-    n = fieldcount(T)
-    vals = [:(_fieldtag(st, ft, $(QuoteNode(fieldname(T, i))))) for i = 1:n]
+    t = Expr(:tuple)
+    for i = 1:fieldcount(T)
+        push!(t.args, :(_fieldtag(st, ft, $(QuoteNode(fieldname(T, i))))))
+    end
     return quote
         Base.@_inline_meta
         ft = fieldtags(st, T)
         if isempty(ft)
             return _fieldtagtuple_public(st, T, fsyms)
         else
-            return ($(vals...),)
+            return $t
         end
     end
 end
 
 @generated function _fieldtagtuple_public(st::StructStyle, ::Type{T}, fsyms) where {T}
-    n = fieldcount(T)
-    vals = [:(fieldtags(st, T, $(QuoteNode(fieldname(T, i))))) for i = 1:n]
-    return quote
-        Base.@_inline_meta
-        return ($(vals...),)
+    t = Expr(:tuple)
+    for i = 1:fieldcount(T)
+        push!(t.args, :(fieldtags(st, T, $(QuoteNode(fieldname(T, i))))))
     end
+    return Expr(:block, :(Base.@_inline_meta), :(return $t))
 end
 
 """
@@ -846,7 +847,15 @@ end
 @inline abstractcollectionpassthrough(style::StructStyle, ::Type{T}, source) where {T} =
     isabstracttype(T) && source isa T && (dictlike(style, T) || arraylike(style, T))
 
-function make(style::StructStyle, T::Type, source, tags)
+# Keep normal `make` dispatch at the public boundary so exact custom methods
+# and `@choosetype` methods win first. The concrete `Val{T}` token then gives
+# the default implementation a specialized signature even when `T` is a
+# Union, which avoids duplicating Union behavior in generated field code.
+function make(style::StructStyle, ::Type{T}, source, tags) where {T}
+    return _make(style, Val{T}(), source, tags)
+end
+
+function _make(style::StructStyle, ::Val{T}, source, tags) where {T}
     if haskey(tags, :choosetype)
         return make(style, tags.choosetype(source), source, _delete(tags, :choosetype))
     end
@@ -904,7 +913,7 @@ function make(style::StructStyle, T::Type, source, tags)
     end
 end
 
-function make(style::StructStyle, T::Type, source)
+function make(style::StructStyle, ::Type{T}, source) where {T}
     if abstractcollectionpassthrough(style, T, source)
         return source, defaultstate(style)
     end
@@ -990,11 +999,11 @@ macro _t(i)
 end
 
 @generated function _tuple(::Type{T}, vals, style) where {T}
-    n = fieldcount(T)
-    ex = Expr(:block)
-    push!(ex.args, :(Base.@_inline_meta))
-    push!(ex.args, Expr(:tuple, [:(@_t($i)) for i = 1:n]...))
-    return ex
+    t = Expr(:tuple)
+    for i = 1:fieldcount(T)
+        push!(t.args, :(@_t($i)))
+    end
+    return Expr(:block, :(Base.@_inline_meta), t)
 end
 
 struct TupleClosure{T,A,S}
@@ -1112,27 +1121,26 @@ function makearray(style, x::T, source) where {T}
     end
 end
 
+# NOTE for all @generated functions in this file: generator bodies avoid
+# comprehensions/generators that capture `T` — each such closure type is
+# specific to `Type{T}`, so running the generator would trigger fresh
+# inference of `collect(Generator{...})` for every target type (measured at
+# ~5-10ms per closure per type)
 @generated function fieldnamestrings(::Type{T}) where {T}
-    :($(Tuple(String(fieldname(T, i)) for i in 1:fieldcount(T))))
+    t = Expr(:tuple)
+    for i = 1:fieldcount(T)
+        push!(t.args, String(fieldname(T, i)))
+    end
+    return t
 end
 
 @generated function fieldnamesymbols(::Type{T}) where {T}
-    :($(Tuple(fieldname(T, i) for i in 1:fieldcount(T))))
+    t = Expr(:tuple)
+    for i = 1:fieldcount(T)
+        push!(t.args, QuoteNode(fieldname(T, i)))
+    end
+    return t
 end
-
-struct StructClosure{T,A,S,FS,FSS,FT}
-    vals::A # Memory{Any} for structs, T for mutable structs
-    style::S
-    fsyms::FS
-    fstrs::FSS
-    ftags::FT
-end
-
-StructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS) where {T,A,S,FS,FSS} =
-    StructClosure{T}(vals, style, fsyms, fstrs, _fieldtagtuple(style, T, fsyms))
-
-StructClosure{T}(vals::A, style::S, fsyms::FS, fstrs::FSS, ftags::FT) where {T,A,S,FS,FSS,FT} =
-    StructClosure{T,A,S,FS,FSS,FT}(vals, style, fsyms, fstrs, ftags)
 
 if VERSION < v"1.11"
     setval!(vals::Vector{Any}, x, i) = @inbounds vals[i] = x
@@ -1142,47 +1150,167 @@ end
 
 setval!(vals::T, x, i) where {T} = _setfield!(vals, i, x)
 
-function findfield(::Type{T}, k, v, f) where {T}
-    st = _foreach(T) do i
-        if typeof(k) == Symbol
-            fn = f.fsyms[i]
-            ftags = f.ftags[i]
-            field = get(ftags, :name, fn)
-            if keyeq(k, field) || keyeq(k, fn)
-                symval, symst = make(f.style, fieldtype(T, i), v, ftags)
-                setval!(f.vals, symval, i)
-                return EarlyReturn(_MatchedState(symst))
-            end
-        elseif typeof(k) == Int
-            if k == i
-                ftags = f.ftags[i]
-                intval, intst = make(f.style, fieldtype(T, i), v, ftags)
-                setval!(f.vals, intval, i)
-                return EarlyReturn(_MatchedState(intst))
-            end
-        else
-            fn = f.fsyms[i]
-            fstr = f.fstrs[i]
-            ftags = f.ftags[i]
-            field = get(ftags, :name, fstr)
-            if keyeq(k, field)
-                strval, strst = make(f.style, fieldtype(T, i), v, ftags)
-                setval!(f.vals, strval, i)
-                return EarlyReturn(_MatchedState(strst))
-            end
-        end
-    end
-    return st isa _MatchedState ? st.value : unknownfield(f.style, T, k, v)
+# Struct-shaped targets are filled by a FieldSink: a source key is matched to
+# a field index (see `cursorhit`/`matchscan` below), then the generated
+# `applyfield!` ladder dispatches the index to a `make` call on that field's
+# concrete type.
+
+struct NoFieldMetadata end
+
+struct FieldMetadata{FT}
+    tags::FT
 end
 
-(f::StructClosure{T,A,S,FS,FSS,FT})(k, v) where {T,A,S,FS,FSS,FT} = findfield(T, k, v, f)
+struct NoCursor end
 
-@inline makenoarg(style, ::Type{T}, source) where {T} = makenoarg(style, initialize(style, T, source), source)
+@inline fieldmetadata(tags::Tuple{Vararg{@NamedTuple{}}}) = NoFieldMetadata()
+@inline fieldmetadata(tags) = FieldMetadata(tags)
+
+@inline sinktag(::NoFieldMetadata, ::Int) = (;)
+@inline sinktag(metadata::FieldMetadata, i::Int) = @inbounds metadata.tags[i]
+
+@inline ignoredfield(tags::NamedTuple{names}) where {names} =
+    :ignore in names && tags.ignore
+
+"""
+    StructUtils.orderedfields(::StructStyle) -> Bool
+
+Return `true` only when a style consumes source keys in field order and its
+owned key type implements [`StructUtils.orderedfieldmatch`](@ref). This is an
+internal, experimental integration hook. The source integration must own the
+only key type for which `orderedfieldmatch` can return `true`; generic sources
+must keep declaration-order matching.
+"""
+orderedfields(::StructStyle) = false
+
+@inline fieldcursor(style, ::NoFieldMetadata) =
+    orderedfields(style) ? Ref(1) : NoCursor()
+@inline fieldcursor(style, ::FieldMetadata) = NoCursor()
+
+struct FieldSink{T,S,V,M,C}
+    vals::V           # Memory{Any} (immutable/NamedTuple targets) or the instance itself (noarg)
+    style::S
+    metadata::M       # empty marker or per-field tag NamedTuples, fetched once per `make`
+    cursor::C         # NoCursor, or source-owned ordered-key cursor storage
+end
+
+FieldSink{T}(vals::V, style::S, metadata::M, cursor::C) where {T,S,V,M,C} =
+    FieldSink{T,S,V,M,C}(vals, style, metadata, cursor)
+
+# Key matching is two-phase. Phase 1 (`cursorhit`) is an internal opt-in for
+# source-owned key types that can prove the next raw field-name match without
+# changing `keyeq` semantics. Generic sources skip it: a custom key may match
+# several fields and must always select the first one in declaration order.
+# Phase 2 (`matchscan`) is a per-type generated scan with field-name literals.
+@inline function matchone(k, ::NoFieldMetadata, i, fn, fstr)
+    _ = i
+    if typeof(k) == Symbol
+        return keyeq(k, fn)
+    else
+        return keyeq(k, fstr)
+    end
+end
+
+@inline function matchone(k, metadata::FieldMetadata, i, fn, fstr)
+    tags = sinktag(metadata, i)
+    if typeof(k) == Symbol
+        name = get(tags, :name, fn)
+        return keyeq(k, name) || keyeq(k, fn)
+    else
+        return keyeq(k, get(tags, :name, fstr))
+    end
+end
+
+"""
+    StructUtils.orderedfieldmatch(key, field::String) -> Bool
+
+Return `true` when an integration-owned source-key type proves an exact raw
+field-name match. This is an internal, experimental hook. Styles must also opt
+in through [`StructUtils.orderedfields`](@ref), and the generic fallback must
+remain `false`.
+"""
+@inline orderedfieldmatch(key, field::String) = false
+@inline cursorhit(k, ::NoCursor, metadata, fstrs) = 0
+@inline advancecursor!(::NoCursor, i::Int, n::Int) = nothing
+@inline advancecursor!(cursor::Base.RefValue{Int}, i::Int, n::Int) =
+    cursor[] = i == n ? 1 : i + 1
+
+function cursorhit(k, cursor::Base.RefValue{Int}, metadata, fstrs)
+    N = length(fstrs)
+    # Tagged names can overlap. Preserve first-field scan order by using the
+    # cursor only when every field has the default empty metadata.
+    metadata isa NoFieldMetadata || return 0
+    N == 0 && return 0
+    i = cursor[]
+    i > N && (i = 1)
+    if orderedfieldmatch(k, @inbounds(fstrs[i]))
+        cursor[] = i == N ? 1 : i + 1
+        return i
+    end
+    return 0
+end
+
+@generated function matchscan(::Type{T}, k, metadata) where {T}
+    ex = Expr(:block)
+    for i = 1:fieldcount(T)
+        fn = QuoteNode(fieldname(T, i))
+        fstr = String(fieldname(T, i))
+        push!(ex.args, :(matchone(k, metadata, $i, $fn, $fstr) && return $i))
+    end
+    push!(ex.args, :(return 0))
+    return ex
+end
+
+# Splice each field type as a literal. Normal `make` dispatch remains visible,
+# including exact custom methods; its default path uses the concrete Val token
+# above for Union targets.
+function _fieldmake(j::Int, @nospecialize(ft))
+    return :(make(f.style, $ft, v, sinktag(f.metadata, $j)))
+end
+
+@generated function applyfield!(f::FieldSink{T}, i::Int, v) where {T}
+    ex = Expr(:block)
+    for j = 1:fieldcount(T)
+        push!(ex.args, quote
+            if i == $j
+                ignoredfield(sinktag(f.metadata, $j)) && return defaultstate(f.style)
+                val, st = $(_fieldmake(j, fieldtype(T, j)))
+                setval!(f.vals, val, $j)
+                return st
+            end
+        end)
+    end
+    push!(ex.args, :(return defaultstate(f.style)))
+    return ex
+end
+
+function (f::FieldSink{T,S,V,M,C})(k, v) where {T,S,V,M,C}
+    N = fieldcount(T)
+    i = typeof(k) == Int ? ((1 <= k <= N) ? k : 0) :
+        cursorhit(k, f.cursor, f.metadata, fieldnamestrings(T))
+    if i == 0
+        typeof(k) == Int && return unknownfield(f.style, T, k, v)
+        i = matchscan(T, k, f.metadata)
+        i == 0 && return unknownfield(f.style, T, k, v)
+        advancecursor!(f.cursor, i, N)
+    end
+    return applyfield!(f, i, v)
+end
+
+# Build the sink for one make of `T` (tags fetched exactly once per make) and
+# run the source through it. Generic sources use an allocation-free NoCursor;
+# source integrations can provide private cursor storage for owned key types.
+function fillfields!(style::StructStyle, ::Type{T}, vals, source) where {T}
+    tags = _fieldtagtuple(style, T, fieldnamesymbols(T))
+    metadata = fieldmetadata(tags)
+    cursor = fieldcursor(style, metadata)
+    return applyeach(style, FieldSink{T}(vals, style, metadata, cursor), source)
+end
+
+makenoarg(style, ::Type{T}, source) where {T} = makenoarg(style, initialize(style, T, source), source)
 
 function makenoarg(style, y::T, source) where {T}
-    fsyms = fieldnamesymbols(T)
-    fstrs = fieldnamestrings(T)
-    st = applyeach(style, StructClosure{T}(y, style, fsyms, fstrs), source)
+    st = fillfields!(style, T, y, source)
     return y, st
 end
 
@@ -1192,27 +1320,28 @@ end
 
 @generated function _construct(::Type{T}, vals, style, fsyms) where {T}
     n = fieldcount(T)
-    ex = Expr(:block)
-    push!(ex.args, :(Base.@_inline_meta))
     # fast path: all fields assigned, skip fielddefaults entirely
-    all_assigned = Expr(:&&, [:(isassigned(vals, $i)) for i = 1:n]...)
-    fast = Expr(:call, Any[:T, [:(@inbounds(vals[$i])::fieldtype(T, $i)) for i = 1:n]...]...)
-    slow = Expr(:block,
-        :(defs = fielddefaults(style, T, vals)),
-        Expr(:call, Any[:T, [:(@_v($i)) for i = 1:n]...]...))
-    push!(ex.args, Expr(:if, all_assigned, fast, slow))
-    return ex
+    all_assigned = n == 0 ? true : :(isassigned(vals, 1))
+    for i = 2:n
+        all_assigned = Expr(:&&, all_assigned, :(isassigned(vals, $i)))
+    end
+    fast = Expr(:call, :T)
+    slowcall = Expr(:call, :T)
+    for i = 1:n
+        push!(fast.args, :(@inbounds(vals[$i])::fieldtype(T, $i)))
+        push!(slowcall.args, :(@_v($i)))
+    end
+    slow = Expr(:block, :(defs = fielddefaults(style, T, vals)), slowcall)
+    return Expr(:block, :(Base.@_inline_meta), Expr(:if, all_assigned, fast, slow))
 end
 
 function makestruct(style, ::Type{T}, source) where {T}
     vals = mem(fieldcount(T))
-    fsyms = fieldnamesymbols(T)
-    fstrs = fieldnamestrings(T)
-    st = applyeach(style, StructClosure{T}(vals, style, fsyms, fstrs), source)
+    st = fillfields!(style, T, vals, source)
     if T <: NamedTuple
         return T(_tuple(T, vals, style)), st
     else
-        return _construct(T, vals, style, fsyms), st
+        return _construct(T, vals, style, fieldnamesymbols(T)), st
     end
 end
 
