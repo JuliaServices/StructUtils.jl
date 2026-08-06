@@ -347,6 +347,11 @@ Domain value transformation function. This function is called by
 calling the apply function. By default, `lower` is the identity function.
 This allows a domain transformation of values according to the
 style used.
+
+When [`StructUtils.make`](@ref) uses a structural or container builder, it
+also calls `lower` once on a root source that is not struct-like. Struct-like
+root sources are traversed directly, so their `lower` methods may call `make`
+to reuse its field mapping without recursion.
 """
 function lower end
 
@@ -813,6 +818,11 @@ the automatic "all argument" constructor that structs have defined by default (e
 `make` calls `applyeach` on the `source` object, where the key-value pairs
 from `source` will be used in constructing `T`.
 
+Before structural construction, `make` calls [`StructUtils.lower`](@ref) on a
+root source for which [`StructUtils.structlike`](@ref) is `false`. Struct-like
+root sources are traversed directly. `applyeach` still lowers their nested
+values.
+
 The 3rd definition takes a `style` argument, allowing for overloads of non-owned types `T`.
 The main difference between this and the 2nd definition is that the 3rd definition allows for
 the `make` function to return a tuple of the constructed struct and any side-effect state
@@ -846,6 +856,12 @@ end
 # already satisfies the abstract type we must preserve it instead of rebuilding.
 @inline abstractcollectionpassthrough(style::StructStyle, ::Type{T}, source) where {T} =
     isabstracttype(T) && source isa T && (dictlike(style, T) || arraylike(style, T))
+
+# Non-struct sources opt into representation lowering at the root. Structural
+# sources stay intact so a custom `lower` method can call `make` to traverse
+# their fields without immediately calling itself again.
+@inline _lowerrootsource(style::StructStyle, source) =
+    structlike(style, source) ? source : lower(style, source)
 
 # Keep normal `make` dispatch at the public boundary so exact custom methods
 # and `@choosetype` methods win first. The concrete `Val{T}` token then gives
@@ -966,23 +982,23 @@ function make(style::StructStyle, ::Type{T}, source) where {T}
         end
     end
     if T <: Tuple
-        return maketuple(style, T, lower(style, source))
+        return maketuple(style, T, _lowerrootsource(style, source))
     elseif dictlike(style, T)
-        lowered = lower(style, source)
+        lowered = _lowerrootsource(style, source)
         if abstractcollectionpassthrough(style, T, lowered)
             return lowered, defaultstate(style)
         end
         return makedict(style, T, lowered)
     elseif arraylike(style, T)
-        lowered = lower(style, source)
+        lowered = _lowerrootsource(style, source)
         if abstractcollectionpassthrough(style, T, lowered)
             return lowered, defaultstate(style)
         end
         return makearray(style, T, lowered)
     elseif noarg(style, T)
-        return makenoarg(style, T, lower(style, source))
+        return makenoarg(style, T, _lowerrootsource(style, source))
     elseif structlike(style, T)
-        return makestruct(style, T, lower(style, source))
+        return makestruct(style, T, _lowerrootsource(style, source))
     else
         return lift(style, T, source)
     end

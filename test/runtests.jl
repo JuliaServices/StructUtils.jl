@@ -450,6 +450,19 @@ end
     @test StructUtils.make(NonStructMapping, mapping).value === mapping
 end
 
+@testset "struct-like lower may call make: #66" begin
+    style = RecursiveLowerStyle()
+    value = RecursiveLowerRoot(RecursiveLowerLeaf(2), "root")
+    expected = Dict{String,Any}(
+        "leaf" => Dict{String,Any}("value" => 2),
+        "label" => "root",
+    )
+
+    @test StructUtils.lower(style, value) == expected
+    @test StructUtils.make(style, Dict{String,Any}, value) == (expected, nothing)
+    @test StructUtils.make(Dict{String,Any}, value, style) == expected
+end
+
 @testset "Set make: #13" begin
     @test StructUtils.make(Set{Symbol}, Any["FACTOR"]) == Set{Symbol}([:FACTOR])
 end
