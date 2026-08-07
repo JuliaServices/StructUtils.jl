@@ -424,6 +424,117 @@ lift(::Type{VersionNumber}, x::AbstractString) = VersionNumber(x)
 lift(::Type{MIME}, x::AbstractString) = MIME(x)
 lift(::Type{Regex}, x::AbstractString) = Regex(x)
 lift(::Type{T}, x::AbstractString) where {T<:Dates.TimeType} = T(x)
+lift(::Type{Dates.Date}, x::AbstractString) = _liftdate(String(x))
+lift(::Type{Dates.DateTime}, x::AbstractString) = _liftdatetime(String(x))
+lift(::Type{Dates.Time}, x::AbstractString) = _lifttime(String(x))
+
+# ISO 8601 parsers for the three core Dates types. The `Date(str)` family
+# routes through the DateFormat machinery, whose token handling and
+# diagnostics are too dynamic for static compilation (`juliac --trim`); these
+# accept exactly the grammar the default formats do — variable-width numeric
+# fields, an optional year sign, progressively optional smaller fields, and a
+# 1-3 digit fraction — and construct through the validating constructors.
+@inline function _isodigits(s::String, i::Int, maxwidth::Int)
+    n = ncodeunits(s)
+    value = 0
+    width = 0
+    while i <= n && width < maxwidth
+        b = codeunit(s, i)
+        (UInt8('0') <= b <= UInt8('9')) || break
+        value = 10 * value + Int(b - UInt8('0'))
+        i += 1
+        width += 1
+    end
+    return width == 0 ? -1 : value, i
+end
+
+@inline _isochar(s::String, i::Int, c::Char) =
+    i <= ncodeunits(s) && codeunit(s, i) == UInt8(c)
+
+# The default formats treat input as the token sequence
+# `y - m - d T H : M : S . s` (dates stop after `d`, times start at `H`):
+# numeric fields are variable-width, the year may carry a sign, delimiters
+# must match in exact order, and input may end after any complete token —
+# remaining fields default. A missing numeric field, a wrong delimiter, or
+# trailing content is an error.
+macro _isofield(var, maxwidth)
+    esc(quote
+        i > n && @goto done
+        $var, i = _isodigits(s, i, $maxwidth)
+        $var == -1 && throw(ArgumentError(errmsg))
+    end)
+end
+
+macro _isodelim(c)
+    esc(quote
+        i > n && @goto done
+        codeunit(s, i) == UInt8($c) || throw(ArgumentError(errmsg))
+        i += 1
+    end)
+end
+
+function _isoparse(s::String, withdate::Bool, withtime::Bool)
+    errmsg = withtime ? (withdate ? "invalid ISO 8601 date-time" : "invalid ISO 8601 time") : "invalid ISO 8601 date"
+    n = ncodeunits(s)
+    i = 1
+    y = 0
+    m = 1
+    d = 1
+    h = 0
+    mi = 0
+    sec = 0
+    ms = 0
+    if withdate
+        negative = _isochar(s, i, '-')
+        (negative || _isochar(s, i, '+')) && (i += 1)
+        y, i = _isodigits(s, i, 18)
+        y == -1 && throw(ArgumentError(errmsg))
+        negative && (y = -y)
+        @_isodelim '-'
+        @_isofield m 2
+        @_isodelim '-'
+        @_isofield d 2
+        withtime || @goto done
+        @_isodelim 'T'
+        @_isofield h 2
+    else
+        # the leading field is required: time-only input may not be empty
+        h, i = _isodigits(s, i, 2)
+        h == -1 && throw(ArgumentError(errmsg))
+    end
+    @_isodelim ':'
+    @_isofield mi 2
+    @_isodelim ':'
+    @_isofield sec 2
+    @_isodelim '.'
+    i > n && @goto done
+    fraction_start = i
+    ms, i = _isodigits(s, i, 3)
+    ms == -1 && throw(ArgumentError(errmsg))
+    # the fraction is at most three digits (milliseconds), scaled as if
+    # right-padded: ".4" is 400 milliseconds
+    for _ = 1:(3 - (i - fraction_start))
+        ms *= 10
+    end
+    @label done
+    i > n || throw(ArgumentError(errmsg))
+    return y, m, d, h, mi, sec, ms
+end
+
+function _liftdate(s::String)
+    y, m, d, _, _, _, _ = _isoparse(s, true, false)
+    return Dates.Date(y, m, d)
+end
+
+function _liftdatetime(s::String)
+    y, m, d, h, mi, sec, ms = _isoparse(s, true, true)
+    return Dates.DateTime(y, m, d, h, mi, sec, ms)
+end
+
+function _lifttime(s::String)
+    _, _, _, h, mi, sec, ms = _isoparse(s, false, true)
+    return Dates.Time(h, mi, sec, ms)
+end
 
 function lift(::Type{T}, x::AbstractString) where {T<:Enum}
     sym = Symbol(x)

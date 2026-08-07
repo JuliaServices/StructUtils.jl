@@ -1,5 +1,11 @@
-using StructUtils
+using Dates, StructUtils
 using StructUtils.Selectors: @selectors
+
+struct TrimTemporal
+    day::Date
+    stamp::DateTime
+    tick::Time
+end
 
 struct TrimA
     a::Int
@@ -105,6 +111,17 @@ function _assert_trim_public_traits()::Nothing
     StructUtils.kwarg(StructUtils.DefaultStyle(), TrimD) || error("kwarg")
     StructUtils.nulllike(Nothing) || error("nulllike")
     StructUtils.keyeq(:id, "id") || error("keyeq")
+    # temporal lifts hand-parse ISO 8601; the Dates constructors are not
+    # statically compilable
+    StructUtils.make(TrimTemporal, Dict(
+        "day" => "2026-08-07",
+        "stamp" => "2026-08-07T15:00:00.076",
+        "tick" => "12:30:15.25",
+    )) == TrimTemporal(
+        Date(2026, 8, 7),
+        DateTime(2026, 8, 7, 15, 0, 0, 76),
+        Time(12, 30, 15, 250),
+    ) || error("temporal make")
     StructUtils.unknownfield(StructUtils.DefaultStyle(), TrimTagged, :extra, 1) === nothing || error("unknownfield")
     StructUtils.fielddefault(TrimStyle(), TrimSimpleDefaults, :a) == 1 || error("fielddefault")
     StructUtils.fielddefaults(TrimStyle(), TrimSimpleDefaults).b == "ok" || error("fielddefaults")
