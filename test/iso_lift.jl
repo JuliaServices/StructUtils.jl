@@ -10,7 +10,7 @@
         "2020-01-01T10:20:30.4", "2020-01-01T10:20:30.45",
         "2020-01-01T10:20:30.456", "2020-01-01T10:20:30.4567",
         "-0001-02-03T04:05:06.789", "12345-12-31T23:59:59.999",
-        "+2020-01-01", "2020-01-01 10:20:30", "2020-01-01T10:20:30Z",
+        "+2020-01-01", "2020-01-01 10:20:30",
         "garbage", "", "2020-13-01", "2020-01-32", "2020-", "2020-01-",
         "2020-01T", "2020-01-01T", "2020-01-01T10:", "2020-01-01T10:20:",
         "2020-01-01T10:20:30.", "2020-01-01T.", "-", "+", ".",
@@ -45,6 +45,20 @@
     for t in (Time(1, 2, 3), Time(1, 2, 3, 10), Time(23, 59), Time(0))
         @test StructUtils.lift(Time, string(t)) == t
     end
+
+    # DateTime deliberately accepts RFC 3339 offsets — which `DateTime(str)`
+    # rejects — and normalizes to UTC: offset-carrying timestamps are what
+    # most JSON producers emit.
+    @test StructUtils.lift(DateTime, "2026-08-07T15:00:00Z") ==
+          DateTime(2026, 8, 7, 15)
+    @test StructUtils.lift(DateTime, "2026-08-07T15:00:00.076Z") ==
+          DateTime(2026, 8, 7, 15, 0, 0, 76)
+    @test StructUtils.lift(DateTime, "2026-08-07T15:00:00+02:00") ==
+          DateTime(2026, 8, 7, 13)
+    @test StructUtils.lift(DateTime, "2026-08-07T15:00:00-04:30") ==
+          DateTime(2026, 8, 7, 19, 30)
+    @test_throws ArgumentError StructUtils.lift(DateTime, "2026-08-07T15:00:00+2:00")
+    @test_throws ArgumentError StructUtils.lift(DateTime, "2020-01-01Z")
 
     # SubStrings lift like Strings.
     @test StructUtils.lift(DateTime, SubString("x2020-01-01x", 2, 11)) == DateTime(2020, 1, 1)

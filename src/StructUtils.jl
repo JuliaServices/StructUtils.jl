@@ -527,8 +527,34 @@ function _liftdate(s::String)
 end
 
 function _liftdatetime(s::String)
-    y, m, d, h, mi, sec, ms = _isoparse(s, true, true)
-    return Dates.DateTime(y, m, d, h, mi, sec, ms)
+    # `DateTime(str)` rejects time-zone designators, but RFC 3339 date-times
+    # with an offset — `2026-08-07T15:00:00Z`, `…+02:00` — are what most JSON
+    # producers emit. Accept them here and normalize to UTC; without an
+    # offset the value is taken as-is, exactly like the constructor.
+    n = ncodeunits(s)
+    offsetminutes = 0
+    body = s
+    if n > 1 && codeunit(s, n) == UInt8('Z') &&
+       any(i -> codeunit(s, i) == UInt8('T'), 1:(n - 1))
+        body = String(view(codeunits(s), 1:(n - 1)))
+    elseif n >= 6 &&
+           (codeunit(s, n - 5) == UInt8('+') || codeunit(s, n - 5) == UInt8('-')) &&
+           codeunit(s, n - 2) == UInt8(':') &&
+           # require a 'T' before the sign so a date's own '-' never matches
+           any(i -> codeunit(s, i) == UInt8('T'), 1:(n - 6))
+        all(i -> UInt8('0') <= codeunit(s, i) <= UInt8('9'), (n - 4, n - 3, n - 1, n)) ||
+            throw(ArgumentError("invalid ISO 8601 date-time"))
+        hours = 10 * Int(codeunit(s, n - 4) - UInt8('0')) +
+                Int(codeunit(s, n - 3) - UInt8('0'))
+        minutes = 10 * Int(codeunit(s, n - 1) - UInt8('0')) +
+                  Int(codeunit(s, n) - UInt8('0'))
+        offsetminutes = (codeunit(s, n - 5) == UInt8('+') ? -1 : 1) *
+                        (60 * hours + minutes)
+        body = String(view(codeunits(s), 1:(n - 6)))
+    end
+    y, m, d, h, mi, sec, ms = _isoparse(body, true, true)
+    value = Dates.DateTime(y, m, d, h, mi, sec, ms)
+    return offsetminutes == 0 ? value : value + Dates.Minute(offsetminutes)
 end
 
 function _lifttime(s::String)
