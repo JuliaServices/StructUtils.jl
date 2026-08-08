@@ -1,22 +1,23 @@
 # The default lifts for Date, DateTime, and Time hand-parse ISO 8601 instead
 # of calling the Dates constructors: the DateFormat machinery those route
 # through is too dynamic for static compilation (`juliac --trim`). These
-# tests pin the hand-rolled parsers to the exact grammar and error behavior
-# of `Date(str)`, `DateTime(str)`, and `Time(str)`.
-@testset "ISO 8601 default lifts match the Dates constructors" begin
+# tests pin the hand-rolled parsers to the Dates grammar that is stable across
+# supported Julia versions. Julia 1.9 rejects signed years and year-only
+# `DateTime` input that newer Julia versions accept, so those cases have
+# explicit, version-independent expectations below.
+@testset "ISO 8601 default lifts" begin
     datetime_cases = [
-        "2020", "2020-01", "2020-1", "2020-01-01", "2020-1-1",
+        "2020-01", "2020-1", "2020-01-01", "2020-1-1",
         "2020-01-01T10", "2020-01-01T10:20", "2020-01-01T10:20:30",
         "2020-01-01T10:20:30.4", "2020-01-01T10:20:30.45",
         "2020-01-01T10:20:30.456", "2020-01-01T10:20:30.4567",
-        "-0001-02-03T04:05:06.789", "12345-12-31T23:59:59.999",
-        "+2020-01-01", "2020-01-01 10:20:30",
+        "12345-12-31T23:59:59.999", "2020-01-01 10:20:30",
         "garbage", "", "2020-13-01", "2020-01-32", "2020-", "2020-01-",
         "2020-01T", "2020-01-01T", "2020-01-01T10:", "2020-01-01T10:20:",
         "2020-01-01T10:20:30.", "2020-01-01T.", "-", "+", ".",
     ]
     date_cases = [
-        "2020-01-01", "2020-1-1", "2020", "12345-01-01", "-0001-02-03",
+        "2020-01-01", "2020-1-1", "2020", "12345-01-01",
         "2020-01-01T10:20:30", "garbage", "2020-02-30", "", "2020-", "2020-01-",
     ]
     time_cases = [
@@ -34,6 +35,14 @@
     for c in time_cases
         @test outcome(x -> StructUtils.lift(Time, x), c) == outcome(Time, c)
     end
+
+    # Keep the lift grammar stable on Julia 1.9 even where that version's
+    # string constructors are narrower than later Julia versions.
+    @test StructUtils.lift(DateTime, "2020") == DateTime(2020)
+    @test StructUtils.lift(DateTime, "+2020-01-01") == DateTime(2020, 1, 1)
+    @test StructUtils.lift(DateTime, "-0001-02-03T04:05:06.789") ==
+          DateTime(-1, 2, 3, 4, 5, 6, 789)
+    @test StructUtils.lift(Date, "-0001-02-03") == Date(-1, 2, 3)
 
     # `string` output round-trips exactly for every field combination.
     for dt in (DateTime(2026, 8, 7, 15, 0, 0, 76), DateTime(2020, 1, 1), DateTime(-1, 2, 3, 4, 5, 6, 789))
