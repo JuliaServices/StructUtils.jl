@@ -278,6 +278,25 @@ function StructUtils.make(
     return NonStructCustomMakeTarget(true), StructUtils.defaultstate(style)
 end
 
+struct RecursiveLowerStyle <: StructUtils.StructStyle end
+
+struct RecursiveLowerLeaf
+    value::Int
+end
+
+struct RecursiveLowerRoot
+    leaf::RecursiveLowerLeaf
+    label::String
+end
+
+function StructUtils.lower(
+    style::RecursiveLowerStyle,
+    value::Union{RecursiveLowerLeaf,RecursiveLowerRoot},
+)
+    result, _ = StructUtils.make(style, Dict{String,Any}, value)
+    return result
+end
+
 struct Q
     id::Int
     value::MIME

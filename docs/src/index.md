@@ -226,17 +226,29 @@ The `make` function follows these steps:
    - Regular struct (default constructor)
    - Primitive type (requiring a `lift` function)
 
-2. **Object Construction**:
+2. **Root Source Conversion**:
+   - Call `lower` once when the root source is not struct-like
+   - Traverse a struct-like root directly
+
+3. **Object Construction**:
    - For dictionary-like types: Create an empty dictionary and add key-value pairs
    - For array-like types: Create an empty array and push values
    - For no-arg types: Create an empty instance and set fields
    - For regular structs: Collect field values and call the constructor
    - For primitive types: Use `lift` to convert the source value
 
-3. **Field Mapping**:
+4. **Field Mapping**:
    - Match source keys to target fields, respecting field tags
    - Convert values to appropriate field types
    - Handle missing values, defaults, and special types
+
+`applyeach` calls `lower` on nested values in both cases. A `lower` method for
+a struct-like type may therefore call `make` to reuse its field traversal:
+
+```julia
+StructUtils.lower(style::MyStyle, x::MyStruct) =
+    StructUtils.make(Dict{String,Any}, x, style)
+```
 
 ## Implementing StructUtils Interfaces
 
@@ -526,4 +538,3 @@ StructUtils.jl provides a comprehensive suite of tools for working with Julia st
    - Field metadata (`fielddefaults`, `fieldtags`, etc.)
 
 StructUtils.jl integrates well with other packages like JSON.jl for seamless serialization and deserialization of complex Julia types.
-
