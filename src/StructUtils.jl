@@ -724,7 +724,7 @@ applyeach(f, st::StructStyle, x) = applyeach(st, f, x)
 function applyeach(st::StructStyle, f, x::AbstractArray)
     for i in eachindex(x)
         ret = if @inbounds(isassigned(x, i))
-            f(lowerkey(st, i), lower(st, @inbounds(x[i])))
+            _applyelement(st, f, lowerkey(st, i), @inbounds(x[i]))
         else
             f(lowerkey(st, i), lower(st, nothing))
         end
@@ -823,9 +823,17 @@ function applyeach(st::StructStyle, f, x::T) where {T}
     end
 end
 
+# Function barrier: for a container whose element type is a union of
+# concrete types, `f(key, lower(st, v))` inline sees the union of every
+# `lower` result and cannot resolve `f`; dispatching per element makes
+# `f(key, lower(st, v))` compile against the concrete element type, so both
+# the JIT and `juliac --trim` see a static call. (Concrete element types
+# inline through unchanged.)
+@inline _applyelement(st::StructStyle, f, key, v) = f(key, lower(st, v))
+
 function applyeach(st::StructStyle, f, x::AbstractDict)
     for (k, v) in x
-        ret = f(lowerkey(st, k), lower(st, v))
+        ret = _applyelement(st, f, lowerkey(st, k), v)
         ret isa EarlyReturn && return ret
     end
     return defaultstate(st)
