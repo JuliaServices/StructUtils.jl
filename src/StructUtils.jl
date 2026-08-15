@@ -255,6 +255,25 @@ function arraylike end
 
 arraylike(st::StructStyle, x) = arraylike(st, typeof(x))
 arraylike(::StructStyle, T::Type) = arraylike(T)
+
+# Compile-time split of a two-member `Union{Scalar, ArrayType}` (after
+# Nothing/Missing have been peeled): returns `(arr_type, scalar_type)`, or
+# `nothing` when the union is not exactly one arraylike plus one non-arraylike
+# member. Computed from `Type{T}` alone so it constant-folds at every call site
+# whose target type is known — under `juliac --trim` the runtime loop over
+# `Base.uniontypes` produced an `Any`-typed arm and a dynamic `make` call.
+@inline function _arrayscalar_split(style, ::Type{T}) where {T}
+    T isa Union || return nothing
+    a = T.a
+    b = T.b
+    (a isa Union || b isa Union) && return nothing
+    aa = arraylike(style, a)
+    ba = arraylike(style, b)
+    aa && !ba && return (a, b)
+    ba && !aa && return (b, a)
+    return nothing
+end
+
 arraylike(::Type{<:AbstractArray{T,0}}) where {T} = false
 arraylike(::Type{<:AbstractArray}) = true
 arraylike(::Type{<:AbstractSet}) = true
@@ -357,6 +376,12 @@ function lower end
 
 lower(::StructStyle, x) = lower(x)
 lower(x) = x
+
+# The no-tags case is a separate method so its return type is exactly that of
+# `lower(st, x)`: with tags an untyped NamedTuple parameter, inference widened
+# every field's lowered value to `Any` (a `tags.lower(x)` branch it could not
+# rule out), making each struct-field write a dynamic call under `juliac --trim`.
+lower(st::StructStyle, x, ::@NamedTuple{}) = lower(st, x)
 
 function lower(st::StructStyle, x, tags)
     # there are a few builtin tags supported
@@ -734,6 +759,21 @@ function applyeach(st::StructStyle, f, x::Union{AbstractSet,Base.Generator,Core.
     return defaultstate(st)
 end
 
+
+# Apply `f` to one struct field. A `Union{Nothing, T}` field value is split
+# with an explicit `=== nothing` branch so each closure invocation sees a
+# concrete value type; the generic `f(key, lower(...))` on the union is a
+# dynamic call under `juliac --trim`. Splitting on `nothing` covers the
+# overwhelmingly common optional-field case; other unions still union-split
+# through ordinary dispatch.
+@inline function _applyfield(st::StructStyle, f, fname, v, ftags)
+    if v === nothing
+        return f(lowerkey(st, fname), lower(st, nothing, ftags))
+    else
+        return f(lowerkey(st, fname), lower(st, v, ftags))
+    end
+end
+
 # generic definition for Tuple, NamedTuple, structs
 function applyeach(st::StructStyle, f, x::T) where {T}
     if @generated
@@ -748,7 +788,7 @@ function applyeach(st::StructStyle, f, x::T) where {T}
                 if !haskey(ftags, :ignore) || !ftags.ignore
                     fname = get(ftags, :name, $fname)
                     ret = if isdefined(x, $i)
-                        f(lowerkey(st, fname), lower(st, getfield(x, $i), ftags))
+                        _applyfield(st, f, fname, getfield(x, $i), ftags)
                     elseif haskey(defs, $fname)
                         # this branch should be really rare because we should
                         # have applied a field default in the struct constructor
@@ -770,7 +810,7 @@ function applyeach(st::StructStyle, f, x::T) where {T}
             if !haskey(ftags, :ignore) || !ftags.ignore
                 fname = get(ftags, :name, fname)
                 ret = if isdefined(x, i)
-                    f(lowerkey(st, fname), lower(st, getfield(x, i), ftags))
+                    _applyfield(st, f, fname, getfield(x, i), ftags)
                 elseif haskey(defs, fname)
                     f(lowerkey(st, fname), lower(st, defs[fname], ftags))
                 else
@@ -1029,33 +1069,13 @@ function _make(style::StructStyle, ::Val{T}, source, tags) where {T}
         # for Union types like Union{T, Vector{T}} (after Nothing/Missing have been peeled),
         # we can disambiguate by checking if source is arraylike;
         # only applies when there's exactly one arraylike and one non-arraylike member
-        if T isa Union
-            types = Base.uniontypes(T)
-            arr_type = nothing
-            scalar_type = nothing
-            ambiguous = false
-            for t in types
-                if arraylike(style, t)
-                    # more than one arraylike type means we can't disambiguate
-                    if arr_type !== nothing
-                        ambiguous = true
-                        break
-                    end
-                    arr_type = t
-                else
-                    if scalar_type !== nothing
-                        ambiguous = true
-                        break
-                    end
-                    scalar_type = t
-                end
-            end
-            if !ambiguous && arr_type !== nothing && scalar_type !== nothing
-                if arraylike(style, source)
-                    return make(style, arr_type, source, tags)
-                else
-                    return make(style, scalar_type, source, tags)
-                end
+        split = _arrayscalar_split(style, T)
+        if split !== nothing
+            arr_type, scalar_type = split
+            if arraylike(style, source)
+                return make(style, arr_type, source, tags)
+            else
+                return make(style, scalar_type, source, tags)
             end
         end
     end
@@ -1088,33 +1108,13 @@ function make(style::StructStyle, ::Type{T}, source) where {T}
         # for Union types like Union{T, Vector{T}} (after Nothing/Missing have been peeled),
         # we can disambiguate by checking if source is arraylike;
         # only applies when there's exactly one arraylike and one non-arraylike member
-        if T isa Union
-            types = Base.uniontypes(T)
-            arr_type = nothing
-            scalar_type = nothing
-            ambiguous = false
-            for t in types
-                if arraylike(style, t)
-                    # more than one arraylike type means we can't disambiguate
-                    if arr_type !== nothing
-                        ambiguous = true
-                        break
-                    end
-                    arr_type = t
-                else
-                    if scalar_type !== nothing
-                        ambiguous = true
-                        break
-                    end
-                    scalar_type = t
-                end
-            end
-            if !ambiguous && arr_type !== nothing && scalar_type !== nothing
-                if arraylike(style, source)
-                    return make(style, arr_type, source)
-                else
-                    return make(style, scalar_type, source)
-                end
+        split = _arrayscalar_split(style, T)
+        if split !== nothing
+            arr_type, scalar_type = split
+            if arraylike(style, source)
+                return make(style, arr_type, source)
+            else
+                return make(style, scalar_type, source)
             end
         end
     end
