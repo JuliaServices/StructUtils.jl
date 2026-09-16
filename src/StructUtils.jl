@@ -1008,6 +1008,48 @@ end
 @inline _lowerrootsource(style::StructStyle, source) =
     structlike(style, source) ? source : lower(style, source)
 
+# Optional integrations can select a target when one member of a Union has
+# package-specific meaning. Returning `nothing` leaves the normal Union
+# disambiguation unchanged.
+@inline _unionmember(
+    ::StructStyle,
+    ::Type{T},
+    ::Type{M},
+    @nospecialize(source),
+) where {T,M} = nothing
+
+@inline _unionbody(T::Type) = T isa UnionAll ? Base.unwrap_unionall(T) : T
+@inline _isuniontype(T::Type) = _unionbody(T) isa Union
+@inline _rewrapunionmember(T::Type, member) =
+    T isa UnionAll ? Base.rewrap_unionall(member, T) : member
+
+@inline function _specialuniontype(style::StructStyle, ::Type{T}, source) where {T}
+    for member in Base.uniontypes(_unionbody(T))
+        selected = _unionmember(style, T, member, source)
+        selected === nothing || return _rewrapunionmember(T, selected)
+    end
+    return nothing
+end
+
+@inline function _uniontype(style::StructStyle, ::Type{T}, source) where {T}
+    arr_type = nothing
+    scalar_type = nothing
+    for member in Base.uniontypes(_unionbody(T))
+        if arraylike(style, member)
+            arr_type === nothing || return nothing
+            arr_type = member
+        else
+            scalar_type === nothing || return nothing
+            scalar_type = member
+        end
+    end
+    if arr_type !== nothing && scalar_type !== nothing
+        selected = arraylike(style, source) ? arr_type : scalar_type
+        return _rewrapunionmember(T, selected)
+    end
+    return nothing
+end
+
 # Keep normal `make` dispatch at the public boundary so exact custom methods
 # and `@choosetype` methods win first. The concrete `Val{T}` token then gives
 # the default implementation a specialized signature even when `T` is a
@@ -1021,6 +1063,10 @@ function _make(style::StructStyle, ::Val{T}, source, tags) where {T}
         return make(style, tags.choosetype(source), source, _delete(tags, :choosetype))
     end
     if T !== Any
+        if _isuniontype(T)
+            selected = _specialuniontype(style, T, source)
+            selected === nothing || return make(style, selected, source, tags)
+        end
         if T >: Missing && T !== Missing
             if nulllike(style, source)
                 return make(style, Missing, source, tags)
@@ -1034,37 +1080,9 @@ function _make(style::StructStyle, ::Val{T}, source, tags) where {T}
                 return make(style, Base.nonnothingtype(T), source, tags)
             end
         end
-        # for Union types like Union{T, Vector{T}} (after Nothing/Missing have been peeled),
-        # we can disambiguate by checking if source is arraylike;
-        # only applies when there's exactly one arraylike and one non-arraylike member
-        if T isa Union
-            types = Base.uniontypes(T)
-            arr_type = nothing
-            scalar_type = nothing
-            ambiguous = false
-            for t in types
-                if arraylike(style, t)
-                    # more than one arraylike type means we can't disambiguate
-                    if arr_type !== nothing
-                        ambiguous = true
-                        break
-                    end
-                    arr_type = t
-                else
-                    if scalar_type !== nothing
-                        ambiguous = true
-                        break
-                    end
-                    scalar_type = t
-                end
-            end
-            if !ambiguous && arr_type !== nothing && scalar_type !== nothing
-                if arraylike(style, source)
-                    return make(style, arr_type, source, tags)
-                else
-                    return make(style, scalar_type, source, tags)
-                end
-            end
+        if _isuniontype(T)
+            selected = _uniontype(style, T, source)
+            selected === nothing || return make(style, selected, source, tags)
         end
     end
     if T <: Tuple || dictlike(style, T) || arraylike(style, T) || noarg(style, T) || structlike(style, T)
@@ -1080,6 +1098,10 @@ function make(style::StructStyle, ::Type{T}, source) where {T}
     end
     # start with some hard-coded Union cases
     if T !== Any
+        if _isuniontype(T)
+            selected = _specialuniontype(style, T, source)
+            selected === nothing || return make(style, selected, source)
+        end
         if T >: Missing && T !== Missing
             if nulllike(style, source)
                 return make(style, Missing, source)
@@ -1093,37 +1115,9 @@ function make(style::StructStyle, ::Type{T}, source) where {T}
                 return make(style, Base.nonnothingtype(T), source)
             end
         end
-        # for Union types like Union{T, Vector{T}} (after Nothing/Missing have been peeled),
-        # we can disambiguate by checking if source is arraylike;
-        # only applies when there's exactly one arraylike and one non-arraylike member
-        if T isa Union
-            types = Base.uniontypes(T)
-            arr_type = nothing
-            scalar_type = nothing
-            ambiguous = false
-            for t in types
-                if arraylike(style, t)
-                    # more than one arraylike type means we can't disambiguate
-                    if arr_type !== nothing
-                        ambiguous = true
-                        break
-                    end
-                    arr_type = t
-                else
-                    if scalar_type !== nothing
-                        ambiguous = true
-                        break
-                    end
-                    scalar_type = t
-                end
-            end
-            if !ambiguous && arr_type !== nothing && scalar_type !== nothing
-                if arraylike(style, source)
-                    return make(style, arr_type, source)
-                else
-                    return make(style, scalar_type, source)
-                end
-            end
+        if _isuniontype(T)
+            selected = _uniontype(style, T, source)
+            selected === nothing || return make(style, selected, source)
         end
     end
     if T <: Tuple
@@ -1475,8 +1469,14 @@ function makenoarg(style, y::T, source) where {T}
     return y, st
 end
 
+@inline _missingfield(::StructStyle, T::Type, key, defs) = get(defs, key, nothing)
+
 macro _v(i)
-    esc(:(isassigned(vals, $i) ? @inbounds(vals[$i])::fieldtype(T, $i) : get(defs, @inbounds(fsyms[$i]), nothing)::fieldtype(T, $i)))
+    esc(:(
+        isassigned(vals, $i) ?
+        @inbounds(vals[$i])::fieldtype(T, $i) :
+        _missingfield(style, T, @inbounds(fsyms[$i]), defs)::fieldtype(T, $i)
+    ))
 end
 
 @generated function _construct(::Type{T}, vals, style, fsyms) where {T}

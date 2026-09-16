@@ -198,6 +198,9 @@ end
     end
 
     @testset "custom nullable dispatch" begin
+        source = Dict("a" => 1)
+        @test StructUtils.make(Union{Nothing,Vector{Any}}, source) == Any[1]
+        @test StructUtils.make(Union{Missing,Vector{Any}}, source) == Any[1]
         @test StructUtils.make(ChoiceHolder, (value=(x=2,),)) ==
             ChoiceHolder(ChosenValue(2))
         @test StructUtils.make(ChoiceHolder, (value=nothing,)) ==

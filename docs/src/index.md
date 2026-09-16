@@ -215,6 +215,64 @@ nt = StructUtils.make(NamedTuple, user)
 user = JSON.parse(json_string, User)  # Uses StructUtils.make under the hood
 ```
 
+### Parametric Types
+
+Use a concrete target when its type parameters are known:
+
+```julia
+struct Box{T}
+    value::T
+end
+
+box = StructUtils.make(Box{Int}, Dict("value" => 1))
+```
+
+An unparameterized target also works when its constructor can infer every type
+parameter from the converted field values:
+
+```julia
+inferred = StructUtils.make(Box, Dict("value" => 1))
+@assert inferred isa Box{Int}
+```
+
+Use a concrete target or a `choosetype` tag when constructor inference cannot
+determine every parameter.
+
+### Lazily Initialized Fields
+
+When
+[`LazilyInitializedFields.jl`](https://github.com/KristofferC/LazilyInitializedFields.jl)
+is loaded, its lazy fields can be omitted from a source. StructUtils initializes
+each omitted lazy field with `uninit`. Present values are converted to the
+field's logical type, including nested structs and parametric types.
+
+```julia
+using LazilyInitializedFields
+
+struct Entry{T}
+    value::T
+end
+
+@lazy struct Cache{T}
+    id::T
+    @lazy entry::Entry{T}
+end
+
+empty_cache = StructUtils.make(Cache{Int}, Dict("id" => 1))
+@assert !isinit(empty_cache, :entry)
+
+loaded_cache = StructUtils.make(
+    Cache,
+    Dict("id" => 1, "entry" => Dict("value" => 2)),
+)
+@assert loaded_cache isa Cache{Int}
+@assert loaded_cache.entry == Entry{Int}(2)
+```
+
+An explicit StructUtils field default takes precedence over `uninit`.
+Outbound conversion still treats `uninit` as a defined field value and includes
+it in the destination.
+
 ### How `make` Works
 
 The `make` function follows these steps:
