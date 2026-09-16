@@ -332,3 +332,18 @@ end
 struct FrankenTuple
     params::Tuple{Union{Float64, Nothing}, Union{Vector{Float64}, Float64}, Union{Vector{Float64}, Float64, Nothing}}
 end
+
+# Shaped like FixedPointDecimals.FixedDecimal: a `Number` backed by a single integer
+# field, where the field layout is an implementation detail and the value itself is a
+# scalar. Such a type must be made by lifting a scalar source, not by reading `{"i": n}`.
+struct Centi <: Real
+    i::Int
+end
+Base.convert(::Type{Centi}, x::AbstractFloat) = Centi(round(Int, 100x))
+Base.convert(::Type{Centi}, x::Integer) = Centi(100 * Int(x))
+Base.:(==)(a::Centi, b::Centi) = a.i == b.i
+
+struct CentiHolder
+    x::Centi
+end
+Base.:(==)(a::CentiHolder, b::CentiHolder) = a.x == b.x

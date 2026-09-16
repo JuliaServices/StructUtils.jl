@@ -569,6 +569,29 @@ end
     @test StructUtils.structlike(StructUtils.DefaultStyle(), BigFloat) == false
 end
 
+@testset "Number subtypes are atoms" begin
+    # A Number is represented by its value, not its field layout. The rule has to reach
+    # subtypes: before this, only the exact type `Number` matched, so every user-defined
+    # Number struct was classified struct-like and could not be made from a scalar.
+    @test StructUtils.structlike(Centi) == false
+    @test StructUtils.structlike(StructUtils.DefaultStyle(), Centi) == false
+    @test StructUtils.make(Centi, 4.0) == Centi(400)
+    @test StructUtils.make(Centi, 4) == Centi(400)
+    @test StructUtils.make(CentiHolder, (x=4.0,)) == CentiHolder(Centi(400))
+    @test StructUtils.make(Vector{Centi}, [1.0, 2.0]) == [Centi(100), Centi(200)]
+
+    # Primitive numbers were never struct types, so they are unaffected.
+    @test StructUtils.structlike(Int) == false
+    @test StructUtils.structlike(Float64) == false
+    @test StructUtils.structlike(Bool) == false
+
+    # ...but multi-component numbers have no scalar form and keep their field layout.
+    @test StructUtils.structlike(Complex{Float64}) == true
+    @test StructUtils.structlike(Rational{Int}) == true
+    @test StructUtils.make(Complex{Float64}, (re=1.0, im=2.0)) == 1.0 + 2.0im
+    @test StructUtils.make(Rational{Int}, (num=3, den=4)) == 3//4
+end
+
 @testset "keyeq with Tuple" begin
     # Test basic tuple functionality
     @test StructUtils.keyeq(:a, ("a", "b", "c"))

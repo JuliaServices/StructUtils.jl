@@ -311,9 +311,17 @@ structlike(::Type{<:AbstractString}) = false
 structlike(::Type{Symbol}) = false
 structlike(::Type{Regex}) = false
 structlike(::Type{<:Dates.TimeType}) = false
-structlike(::Type{Number}) = false
-structlike(::Type{BigInt}) = false
-structlike(::Type{BigFloat}) = false
+# A `Number` is an atom: it is represented by its value, not by its field layout. This
+# has to cover subtypes rather than just `Number` itself; `BigInt` and `BigFloat` used to
+# be listed here individually precisely because a `::Type{Number}` method never reached
+# them, which also left every user-defined `Number` struct (fixed-point decimals, unit
+# wrappers, ...) classified as struct-like and therefore unreadable from a scalar source.
+structlike(::Type{<:Number}) = false
+# ...except multi-component numbers, which have no single scalar representation and so
+# keep their field layout. Note `lower` overloads may still be used to control exactly
+# which fields these serialize as.
+structlike(::Type{<:Complex}) = true
+structlike(::Type{<:Rational}) = true
 structlike(::Type{Nothing}) = false
 structlike(::Type{Missing}) = false
 structlike(::Type{UUID}) = false
