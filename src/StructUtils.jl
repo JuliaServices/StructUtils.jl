@@ -1023,8 +1023,13 @@ end
 @inline _rewrapunionmember(T::Type, member) =
     T isa UnionAll ? Base.rewrap_unionall(member, T) : member
 
+# Keep member types constant so extension dispatch remains visible to trimming.
+@generated function _unionmembers(::Type{T}) where {T}
+    return QuoteNode(Tuple(Base.uniontypes(_unionbody(T))))
+end
+
 @inline function _specialuniontype(style::StructStyle, ::Type{T}, source) where {T}
-    for member in Base.uniontypes(_unionbody(T))
+    for member in _unionmembers(T)
         selected = _unionmember(style, T, member, source)
         selected === nothing || return _rewrapunionmember(T, selected)
     end
@@ -1034,7 +1039,7 @@ end
 @inline function _uniontype(style::StructStyle, ::Type{T}, source) where {T}
     arr_type = nothing
     scalar_type = nothing
-    for member in Base.uniontypes(_unionbody(T))
+    for member in _unionmembers(T)
         if arraylike(style, member)
             arr_type === nothing || return nothing
             arr_type = member

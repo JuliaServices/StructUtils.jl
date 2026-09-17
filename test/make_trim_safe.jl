@@ -14,6 +14,10 @@ struct TrimA
     d::Int
 end
 
+struct TrimNullable
+    value::Union{Nothing,String}
+end
+
 @defaults struct TrimB
     a::Int
     b::Int
@@ -177,6 +181,11 @@ function run_make_trim_sample()::Nothing
 
     a2 = StructUtils.make(TrimA, Dict{Symbol,Int}(:a => 1, :b => 2, :c => 3, :d => 4))
     a2.a == 1 || error("TrimA Dict")
+
+    nullable = StructUtils.make(TrimNullable, Dict{Symbol,Union{Nothing,String}}(:value => "value"))
+    nullable.value == "value" || error("nullable value")
+    null = StructUtils.make(TrimNullable, Dict{Symbol,Union{Nothing,String}}(:value => nothing))
+    null.value === nothing || error("nullable null")
 
     b1 = StructUtils.make(TrimB, (a=1, b=2, c=3, d=4))
     b1.c == 3 || error("TrimB all")
