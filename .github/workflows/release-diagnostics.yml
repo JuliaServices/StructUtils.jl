@@ -1,0 +1,37 @@
+name: Release Windows diagnostics
+on:
+  push:
+    branches: [release-diagnostics-292]
+jobs:
+  trim:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [1aa0b27bc8e90ede64fcc50560726b7dd1c1d69d, 2a2f3e8839b944d1b47744728e1cc617270292c0]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.revision }}
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.13.0'
+      - name: Prepare clean compiler environment
+        shell: pwsh
+        run: |
+          julia --startup-file=no -e 'using Pkg; Pkg.activate("diag-env"); Pkg.develop(path=pwd()); Pkg.add("JuliaC"); Pkg.status(; mode=Pkg.PKGMODE_MANIFEST)'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compile and run package workload
+        shell: pwsh
+        run: |
+          julia --startup-file=no --project=diag-env -e 'using JuliaC; JuliaC.main(ARGS)' -- --output-exe make_trim_safe --bundle diag-bundle --project=diag-env --experimental --trim=safe test/make_trim_safe.jl
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\diag-bundle\bin\make_trim_safe.exe
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-trim-${{ matrix.revision }}
+          path: |
+            diag-env/Manifest.toml
+            diag-bundle/bin/
