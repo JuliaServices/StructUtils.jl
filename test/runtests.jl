@@ -654,6 +654,67 @@ end
     @test StructUtils.make(Vector{SVector{2,Int}}, [[1, 2], [3, 4]]) == [SVector{2,Int}((1, 2)), SVector{2,Int}((3, 4))]
 end
 
+@testset "absent fields take the null their type admits" begin
+    NT = NamedTuple{(:a, :b),Tuple{Union{Missing,Int},Union{Missing,String}}}
+    @test isequal(StructUtils.make(NT, Dict("a" => 1)), (a=1, b=missing))
+    @test isequal(StructUtils.make(AbsentMissing, Dict("a" => 1)), AbsentMissing(1, missing))
+    @test StructUtils.make(AbsentNothing, Dict("a" => 1)) == AbsentNothing(1, nothing)
+    @test isequal(StructUtils.make(Tuple{Int,Union{Missing,String}}, [1]), (1, missing))
+    # `nothing` wins when both are admitted, matching `lift`
+    @test StructUtils.make(NamedTuple{(:a,),Tuple{Union{Missing,Nothing,Int}}}, Dict()) == (a=nothing,)
+    err = try; StructUtils.make(NamedTuple{(:a,),Tuple{String}}, Dict()); nothing; catch e; e; end
+    @test err isa ArgumentError && occursin("field `a`", err.msg)
+    @test_throws ArgumentError StructUtils.make(Tuple{Int,String}, [1])
+end
+
+@testset "applyeach lowers every key and index" begin
+    keys(x) = (ks = Any[]; StructUtils.applyeach(StringKeyStyle(), (k, v) -> push!(ks, k), x); ks)
+    @test keys([10, 20]) == ["1", "2"]
+    @test keys((10, 20)) == ["1", "2"]
+    @test keys(Set([10])) == ["1"]
+    @test keys((x for x in [10, 20])) == ["1", "2"]
+    @test keys(Core.svec(10, 20)) == ["1", "2"]
+    @test keys(Union{Int,String}[10, "a"]) == ["1", "2"]
+    @test keys(Vector{Any}(undef, 2)) == ["1", "2"]
+    @test keys((a=1,)) == ["a"]
+    @test keys(Dict(:a => 1)) == ["a"]
+end
+
+@testset "union-typed fields and elements reach f one member at a time" begin
+    seen(x) = (vs = Any[]; StructUtils.applyeach(StructUtils.DefaultStyle(), (k, v) -> push!(vs, v), x); vs)
+    @test seen(WideUnion(1)) == [1]
+    @test seen(WideUnion("s")) == ["s"]
+    @test seen(WideUnion(nothing)) == [nothing]
+    @test seen(Union{Nothing,Int,String,Float64,Bool}[1, "s", nothing, 2.5, true]) == [1, "s", nothing, 2.5, true]
+    @test seen((a=1, b=nothing)) == [1, nothing]
+    visits = Int[]
+    result = StructUtils.applyeach(Union{Nothing,Int,String,Float64,Bool}[1, "s", nothing]) do k, v
+        push!(visits, k)
+        StructUtils.EarlyReturn(v)
+    end
+    @test result.value == 1
+    @test visits == [1]
+end
+
+@testset "style-first applyeach overloads are unambiguous with the do-block form" begin
+    collected = []
+    @test StructUtils.applyeach(PinStyle(), (k, v) -> push!(collected, k => v), Pinned(3)) !== nothing
+    StructUtils.applyeach(PinStyle(), Pinned(3)) do k, v
+        push!(collected, k => v)
+    end
+    @test collected == ["x" => 3, "x" => 3]
+    sink = CallableCollector([])
+    StructUtils.applyeach(sink, PinStyle(), Pinned(3))
+    StructUtils.applyeach(PinStyle(), sink, Pinned(4))
+    StructUtils.applyeach(sink, [5])
+    @test sink.values == ["x" => 3, "x" => 4, 1 => 5]
+    @test !Base.isambiguous(
+        which(StructUtils.applyeach, (CallableCollector, PinStyle, Pinned)),
+        which(StructUtils.applyeach, (PinStyle, CallableCollector, Pinned)),
+    )
+    @test_throws MethodError StructUtils.applyeach(sink, nothing, [1])
+end
+
 end
 
 include(joinpath(dirname(pathof(StructUtils)), "../test/lazily_initialized_fields.jl"))

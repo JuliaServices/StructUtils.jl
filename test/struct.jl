@@ -347,3 +347,34 @@ struct CentiHolder
     x::Centi
 end
 Base.:(==)(a::CentiHolder, b::CentiHolder) = a.x == b.x
+
+# Absent keys for fields whose type admits `missing` or `nothing`.
+struct AbsentMissing
+    a::Int
+    b::Union{Missing,String}
+end
+struct AbsentNothing
+    a::Int
+    b::Union{Nothing,String}
+end
+
+# A style-first `applyeach` overload, as a package defines for its own types.
+struct PinStyle <: StructUtils.StructStyle end
+struct Pinned
+    x::Int
+end
+StructUtils.applyeach(::PinStyle, f, p::Pinned) = f("x", p.x)
+
+# Lowers every key, so an array index would become a string if it were lowered.
+struct StringKeyStyle <: StructUtils.StructStyle end
+StructUtils.lowerkey(::StringKeyStyle, x) = string(x)
+
+# A field wider than inference splits (four members) and a same-shaped array element type.
+struct WideUnion
+    v::Union{Nothing,Int,String,Float64,Bool}
+end
+
+struct CallableCollector
+    values::Vector{Any}
+end
+(c::CallableCollector)(k, v) = (push!(c.values, k => v); nothing)

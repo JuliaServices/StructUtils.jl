@@ -668,8 +668,10 @@ end
 
 Note that `applyeach` must include the `style` argument when overloading.
 
-Also note that before applying `f`, the key or index is passed through `StructUtils.lowerkey(style, k)`,
-and the value `v` is passed through `StructUtils.lower(style, v)`.
+Before applying `f`, keys and indices pass through `StructUtils.lowerkey(style, k)`
+and values pass through `StructUtils.lower(style, v)`.
+The callback-first forms `applyeach(f, x)` and `applyeach(f, style, x)` also accept callable
+structs. Define overloads in style-first order.
 
 If a value is `#undef` or otherwise not defined, the `f` function should generally be called with `nothing` or skipped.
 """
@@ -702,12 +704,41 @@ struct _MatchedState{T}
 end
 
 applyeach(f, x) = applyeach(DefaultStyle(), f, x)
-applyeach(f, st::StructStyle, x) = applyeach(st, f, x)
+# Leave both leading arguments unconstrained so every style-first overload is more
+# specific, without excluding callable structs from the callback-first form.
+function applyeach(f, st, x)
+    st isa StructStyle || throw(MethodError(applyeach, (f, st, x)))
+    return applyeach(st, f, x)
+end
+
+# `f(key, lower(st, val))` with `val` narrowed to one member of the union `U` at a time.
+# Inference splits a union of at most four members, and none inside a recursive cycle, so a
+# wider union or one met while recursing (a tree of structs) would reach `f` as one dynamic
+# call; each `isa` branch here is a statically resolved call instead.
+@generated function _applysplit(f, key, val, ::Type{U}, st, tags) where {U}
+    call = tags === Nothing ? :(f(key, lower(st, val))) : :(f(key, lower(st, val, tags)))
+    ex = call
+    if U isa Union
+        for M in reverse(Base.uniontypes(U))
+            ex = :(val isa $M ? $call : $ex)
+        end
+    end
+    # Wide struct unions otherwise duplicate the ladder at every field. Keep one
+    # compiled helper; array loops still benefit from inlining the same ladder.
+    if tags !== Nothing && U isa Union && length(Base.uniontypes(U)) > 4
+        return quote
+            Base.@_noinline_meta
+            $ex
+        end
+    end
+    return ex
+end
 
 function applyeach(st::StructStyle, f, x::AbstractArray)
     for i in eachindex(x)
         ret = if @inbounds(isassigned(x, i))
-            f(lowerkey(st, i), lower(st, @inbounds(x[i])))
+            eltype(x) isa Union ? _applysplit(f, lowerkey(st, i), @inbounds(x[i]), eltype(x), st, nothing) :
+                f(lowerkey(st, i), lower(st, @inbounds(x[i])))
         else
             f(lowerkey(st, i), lower(st, nothing))
         end
@@ -749,20 +780,24 @@ function applyeach(st::StructStyle, f, x::T) where {T}
         ex = quote
             defs = fielddefaults(st, T)
         end
+        keyex = :(lowerkey(st, fname))
         for i = 1:N
             fname = Meta.quot(fieldname(T, i))
+            FT = fieldtype(T, i)
+            valex = FT isa Union ? :(_applysplit(f, $keyex, getfield(x, $i), $FT, st, ftags)) :
+                                   :(f($keyex, lower(st, getfield(x, $i), ftags)))
             push!(ex.args, quote
                 ftags = fieldtags(st, T, $fname)
                 if !haskey(ftags, :ignore) || !ftags.ignore
                     fname = get(ftags, :name, $fname)
                     ret = if isdefined(x, $i)
-                        f(lowerkey(st, fname), lower(st, getfield(x, $i), ftags))
+                        $valex
                     elseif haskey(defs, $fname)
                         # this branch should be really rare because we should
                         # have applied a field default in the struct constructor
-                        f(lowerkey(st, fname), lower(st, defs[$fname], ftags))
+                        f($keyex, lower(st, defs[$fname], ftags))
                     else
-                        f(lowerkey(st, fname), lower(st, nothing, ftags))
+                        f($keyex, lower(st, nothing, ftags))
                     end
                     ret isa EarlyReturn && return ret
                 end
@@ -777,12 +812,13 @@ function applyeach(st::StructStyle, f, x::T) where {T}
             ftags = fieldtags(st, T, fname)
             if !haskey(ftags, :ignore) || !ftags.ignore
                 fname = get(ftags, :name, fname)
+                key = lowerkey(st, fname)
                 ret = if isdefined(x, i)
-                    f(lowerkey(st, fname), lower(st, getfield(x, i), ftags))
+                    f(key, lower(st, getfield(x, i), ftags))
                 elseif haskey(defs, fname)
-                    f(lowerkey(st, fname), lower(st, defs[fname], ftags))
+                    f(key, lower(st, defs[fname], ftags))
                 else
-                    f(lowerkey(st, fname), lower(st, nothing, ftags))
+                    f(key, lower(st, nothing, ftags))
                 end
                 ret isa EarlyReturn && return ret
             end
@@ -930,7 +966,7 @@ function (f::MultiDimClosure{S,A})(i::Int, val) where {S,A}
     f.dims[f.cur_dim[]] = i
     if arraylike(f.style, val) && f.cur_dim[] > 1
         f.cur_dim[] -= 1
-        st = applyeach(f, f.style, val)
+        st = applyeach(f.style, f, val)
         f.cur_dim[] += 1
     else
         val, st = make(f.style, eltype(f.arr), val)
@@ -1028,31 +1064,34 @@ end
     return QuoteNode(Tuple(Base.uniontypes(_unionbody(T))))
 end
 
-@inline function _specialuniontype(style::StructStyle, ::Type{T}, source) where {T}
-    for member in _unionmembers(T)
-        selected = _unionmember(style, T, member, source)
-        selected === nothing || return _rewrapunionmember(T, selected)
+@generated function _specialuniontype(style::StructStyle, ::Type{T}, source) where {T}
+    ex = Expr(:block)
+    for member in Base.uniontypes(_unionbody(T))
+        push!(ex.args, quote
+            selected = _unionmember(style, T, $member, source)
+            selected === nothing || return _rewrapunionmember(T, selected)
+        end)
     end
-    return nothing
+    push!(ex.args, :(return nothing))
+    return ex
 end
 
-@inline function _uniontype(style::StructStyle, ::Type{T}, source) where {T}
-    arr_type = nothing
-    scalar_type = nothing
-    for member in _unionmembers(T)
-        if arraylike(style, member)
-            arr_type === nothing || return nothing
-            arr_type = member
-        else
-            scalar_type === nothing || return nothing
-            scalar_type = member
+# Exactly one array-like member and one scalar member can be told apart by the shape of
+# the source, so only a two-member union (after Nothing/Missing were peeled) qualifies.
+@generated function _uniontype(style::StructStyle, ::Type{T}, source) where {T}
+    members = Base.uniontypes(_unionbody(T))
+    length(members) == 2 || return :(return nothing)
+    a, b = members
+    return quote
+        aa = arraylike(style, $a)
+        ba = arraylike(style, $b)
+        if aa && !ba
+            return _rewrapunionmember(T, arraylike(style, source) ? $a : $b)
+        elseif ba && !aa
+            return _rewrapunionmember(T, arraylike(style, source) ? $b : $a)
         end
+        return nothing
     end
-    if arr_type !== nothing && scalar_type !== nothing
-        selected = arraylike(style, source) ? arr_type : scalar_type
-        return _rewrapunionmember(T, selected)
-    end
-    return nothing
 end
 
 # Keep normal `make` dispatch at the public boundary so exact custom methods
@@ -1154,14 +1193,26 @@ else
     mem(n) = Memory{Any}(undef, n)
 end
 
-macro _t(i)
-    esc(:(isassigned(vals, $i) ? @inbounds(vals[$i])::fieldtype(T, $i) : fielddefault(style, T, $i)::fieldtype(T, $i)))
+# The value for a field the source did not supply: its declared default, else the null
+# its type admits (`nothing` first, so `Union{Missing,Nothing,T}` matches `lift`), else an
+# error naming the field. The message holds no type, so it is safe under `juliac --trim`.
+@noinline _absentfield_error(name) =
+    throw(ArgumentError(string("field `", name, "` has no default and is absent from the source")))
+@inline function _absentfield(default, ::Type{FT}, name) where {FT}
+    default === nothing || return default
+    Nothing <: FT && return nothing
+    Missing <: FT && return missing
+    return _absentfield_error(name)
+end
+
+macro _t(i, name)
+    esc(:(isassigned(vals, $i) ? @inbounds(vals[$i])::fieldtype(T, $i) : _absentfield(fielddefault(style, T, $i), fieldtype(T, $i), $name)::fieldtype(T, $i)))
 end
 
 @generated function _tuple(::Type{T}, vals, style) where {T}
     t = Expr(:tuple)
     for i = 1:fieldcount(T)
-        push!(t.args, :(@_t($i)))
+        push!(t.args, :(@_t($i, $(QuoteNode(fieldname(T, i))))))
     end
     return Expr(:block, :(Base.@_inline_meta), t)
 end
@@ -1480,7 +1531,7 @@ macro _v(i)
     esc(:(
         isassigned(vals, $i) ?
         @inbounds(vals[$i])::fieldtype(T, $i) :
-        _missingfield(style, T, @inbounds(fsyms[$i]), defs)::fieldtype(T, $i)
+        _absentfield(_missingfield(style, T, @inbounds(fsyms[$i]), defs), fieldtype(T, $i), @inbounds(fsyms[$i]))::fieldtype(T, $i)
     ))
 end
 
