@@ -242,9 +242,28 @@ function run_make_trim_sample()::Nothing
     return nothing
 end
 
+const TrimWideUnion = Union{Nothing,Int,String,Float64,Bool}
+struct TrimWideField
+    value::TrimWideUnion
+end
+mutable struct TrimCounter
+    count::Int
+end
+(c::TrimCounter)(key, value) = (c.count += 1; nothing)
+function exercise_union_traversal()
+    c = TrimCounter(0)
+    StructUtils.applyeach(c, StructUtils.DefaultStyle(), TrimWideField("x"))
+    StructUtils.applyeach(c, TrimWideUnion[1, "x", nothing, 1.5, true])
+    c.count == 6 || error("wide union traversal")
+    nt = StructUtils.make(@NamedTuple{a::Union{Missing,Int}, b::Union{Missing,String}}, (a=1,))
+    nt.a == 1 && nt.b === missing || error("missing union default")
+    return nothing
+end
+
 function @main(args::Vector{String})::Cint
     _ = args
     run_make_trim_sample()
+    exercise_union_traversal()
     return 0
 end
 

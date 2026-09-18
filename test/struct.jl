@@ -373,3 +373,8 @@ StructUtils.lowerkey(::StringKeyStyle, x) = string(x)
 struct WideUnion
     v::Union{Nothing,Int,String,Float64,Bool}
 end
+
+struct CallableCollector
+    values::Vector{Any}
+end
+(c::CallableCollector)(k, v) = (push!(c.values, k => v); nothing)

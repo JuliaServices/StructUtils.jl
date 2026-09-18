@@ -685,6 +685,13 @@ end
     @test seen(WideUnion(nothing)) == [nothing]
     @test seen(Union{Nothing,Int,String,Float64,Bool}[1, "s", nothing, 2.5, true]) == [1, "s", nothing, 2.5, true]
     @test seen((a=1, b=nothing)) == [1, nothing]
+    visits = Int[]
+    result = StructUtils.applyeach(Union{Nothing,Int,String,Float64,Bool}[1, "s", nothing]) do k, v
+        push!(visits, k)
+        StructUtils.EarlyReturn(v)
+    end
+    @test result.value == 1
+    @test visits == [1]
 end
 
 @testset "style-first applyeach overloads are unambiguous with the do-block form" begin
@@ -694,6 +701,16 @@ end
         push!(collected, k => v)
     end
     @test collected == ["x" => 3, "x" => 3]
+    sink = CallableCollector([])
+    StructUtils.applyeach(sink, PinStyle(), Pinned(3))
+    StructUtils.applyeach(PinStyle(), sink, Pinned(4))
+    StructUtils.applyeach(sink, [5])
+    @test sink.values == ["x" => 3, "x" => 4, 1 => 5]
+    @test !Base.isambiguous(
+        which(StructUtils.applyeach, (CallableCollector, PinStyle, Pinned)),
+        which(StructUtils.applyeach, (PinStyle, CallableCollector, Pinned)),
+    )
+    @test_throws MethodError StructUtils.applyeach(sink, nothing, [1])
 end
 
 end

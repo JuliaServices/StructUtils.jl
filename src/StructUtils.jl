@@ -658,7 +658,7 @@ An example overload of `applyeach` for a generic iterable would be:
 ```julia
 function StructUtils.applyeach(style::StructUtils.StructStyle, f, x::MyIterable)
     for (i, v) in enumerate(x)
-        ret = f(StructUtils.lowerkey(style, i), StructUtils.lower(style, v))
+        ret = f(i, StructUtils.lower(style, v))
         # if `f` returns EarlyReturn, return immediately
         ret isa StructUtils.EarlyReturn && return ret
     end
@@ -668,8 +668,10 @@ end
 
 Note that `applyeach` must include the `style` argument when overloading.
 
-Also note that before applying `f`, the key or index is passed through `StructUtils.lowerkey(style, k)`,
-and the value `v` is passed through `StructUtils.lower(style, v)`.
+Before applying `f`, object keys pass through `StructUtils.lowerkey(style, k)` and values
+pass through `StructUtils.lower(style, v)`. Array, tuple and iterable indices stay unchanged.
+The callback-first forms `applyeach(f, x)` and `applyeach(f, style, x)` also accept callable
+structs. Define overloads in style-first order.
 
 If a value is `#undef` or otherwise not defined, the `f` function should generally be called with `nothing` or skipped.
 """
@@ -702,9 +704,12 @@ struct _MatchedState{T}
 end
 
 applyeach(f, x) = applyeach(DefaultStyle(), f, x)
-# do-block order, `applyeach(style, x) do k, v ... end`; `f::Function` keeps this disjoint from
-# every style-first overload a package adds (`applyeach(::MyStyle, f, ::MyType)`).
-applyeach(f::Function, st::StructStyle, x) = applyeach(st, f, x)
+# Leave both leading arguments unconstrained so every style-first overload is more
+# specific, without excluding callable structs from the callback-first form.
+function applyeach(f, st, x)
+    st isa StructStyle || throw(MethodError(applyeach, (f, st, x)))
+    return applyeach(st, f, x)
+end
 
 # `f(key, lower(st, val))` with `val` narrowed to one member of the union `U` at a time.
 # Inference splits a union of at most four members, and none inside a recursive cycle, so a
@@ -718,16 +723,22 @@ applyeach(f::Function, st::StructStyle, x) = applyeach(st, f, x)
             ex = :(val isa $M ? $call : $ex)
         end
     end
-    return quote
-        Base.@_inline_meta
-        $ex
+    # Wide struct unions otherwise duplicate the ladder at every field. Keep one
+    # compiled helper; array loops still benefit from inlining the same ladder.
+    if tags !== Nothing && U isa Union && length(Base.uniontypes(U)) > 4
+        return quote
+            Base.@_noinline_meta
+            $ex
+        end
     end
+    return ex
 end
 
 function applyeach(st::StructStyle, f, x::AbstractArray)
     for i in eachindex(x)
         ret = if @inbounds(isassigned(x, i))
-            _applysplit(f, i, @inbounds(x[i]), eltype(x), st, nothing)
+            eltype(x) isa Union ? _applysplit(f, i, @inbounds(x[i]), eltype(x), st, nothing) :
+                f(i, lower(st, @inbounds(x[i])))
         else
             f(i, lower(st, nothing))
         end
