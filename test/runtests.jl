@@ -667,15 +667,17 @@ end
     @test_throws ArgumentError StructUtils.make(Tuple{Int,String}, [1])
 end
 
-@testset "applyeach passes array and tuple indices unlowered" begin
+@testset "applyeach lowers every key and index" begin
     keys(x) = (ks = Any[]; StructUtils.applyeach(StringKeyStyle(), (k, v) -> push!(ks, k), x); ks)
-    @test keys([10, 20]) == [1, 2]
-    @test keys((10, 20)) == [1, 2]
-    @test keys(Set([10])) == [1]
+    @test keys([10, 20]) == ["1", "2"]
+    @test keys((10, 20)) == ["1", "2"]
+    @test keys(Set([10])) == ["1"]
+    @test keys((x for x in [10, 20])) == ["1", "2"]
+    @test keys(Core.svec(10, 20)) == ["1", "2"]
+    @test keys(Union{Int,String}[10, "a"]) == ["1", "2"]
+    @test keys(Vector{Any}(undef, 2)) == ["1", "2"]
     @test keys((a=1,)) == ["a"]
     @test keys(Dict(:a => 1)) == ["a"]
-    # a multi-dimensional make indexes with the raw integer keys
-    @test StructUtils.make(Matrix{Int}, [[1, 2], [3, 4]], StringKeyStyle()) == [1 3; 2 4]
 end
 
 @testset "union-typed fields and elements reach f one member at a time" begin

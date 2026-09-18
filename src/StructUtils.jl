@@ -658,7 +658,7 @@ An example overload of `applyeach` for a generic iterable would be:
 ```julia
 function StructUtils.applyeach(style::StructUtils.StructStyle, f, x::MyIterable)
     for (i, v) in enumerate(x)
-        ret = f(i, StructUtils.lower(style, v))
+        ret = f(StructUtils.lowerkey(style, i), StructUtils.lower(style, v))
         # if `f` returns EarlyReturn, return immediately
         ret isa StructUtils.EarlyReturn && return ret
     end
@@ -668,8 +668,8 @@ end
 
 Note that `applyeach` must include the `style` argument when overloading.
 
-Before applying `f`, object keys pass through `StructUtils.lowerkey(style, k)` and values
-pass through `StructUtils.lower(style, v)`. Array, tuple and iterable indices stay unchanged.
+Before applying `f`, keys and indices pass through `StructUtils.lowerkey(style, k)`
+and values pass through `StructUtils.lower(style, v)`.
 The callback-first forms `applyeach(f, x)` and `applyeach(f, style, x)` also accept callable
 structs. Define overloads in style-first order.
 
@@ -737,10 +737,10 @@ end
 function applyeach(st::StructStyle, f, x::AbstractArray)
     for i in eachindex(x)
         ret = if @inbounds(isassigned(x, i))
-            eltype(x) isa Union ? _applysplit(f, i, @inbounds(x[i]), eltype(x), st, nothing) :
-                f(i, lower(st, @inbounds(x[i])))
+            eltype(x) isa Union ? _applysplit(f, lowerkey(st, i), @inbounds(x[i]), eltype(x), st, nothing) :
+                f(lowerkey(st, i), lower(st, @inbounds(x[i])))
         else
-            f(i, lower(st, nothing))
+            f(lowerkey(st, i), lower(st, nothing))
         end
         ret isa EarlyReturn && return ret
     end
@@ -767,7 +767,7 @@ end
 # can't have #undef values
 function applyeach(st::StructStyle, f, x::Union{AbstractSet,Base.Generator,Core.SimpleVector})
     for (i, v) in enumerate(x)
-        ret = f(i, lower(st, v))
+        ret = f(lowerkey(st, i), lower(st, v))
         ret isa EarlyReturn && return ret
     end
     return defaultstate(st)
@@ -780,8 +780,7 @@ function applyeach(st::StructStyle, f, x::T) where {T}
         ex = quote
             defs = fielddefaults(st, T)
         end
-        # a Tuple's "field names" are its indices, which pass through unlowered
-        keyex = T <: Tuple ? :fname : :(lowerkey(st, fname))
+        keyex = :(lowerkey(st, fname))
         for i = 1:N
             fname = Meta.quot(fieldname(T, i))
             FT = fieldtype(T, i)
@@ -813,7 +812,7 @@ function applyeach(st::StructStyle, f, x::T) where {T}
             ftags = fieldtags(st, T, fname)
             if !haskey(ftags, :ignore) || !ftags.ignore
                 fname = get(ftags, :name, fname)
-                key = T <: Tuple ? fname : lowerkey(st, fname)
+                key = lowerkey(st, fname)
                 ret = if isdefined(x, i)
                     f(key, lower(st, getfield(x, i), ftags))
                 elseif haskey(defs, fname)
