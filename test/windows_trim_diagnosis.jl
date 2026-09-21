@@ -22,6 +22,8 @@ minimal = joinpath(out, "minimal.jl")
 write(minimal, """
 function @main(args::Vector{String})::Cint
     ccall(:puts, Cint, (Cstring,), "ENTERED_MAIN")
+    ccall(:fflush, Cint, (Ptr{Cvoid},), C_NULL)
+    ccall(:Sleep, Cvoid, (UInt32,), 200)
     return 0
 end
 Base.Experimental.entrypoint(main, (Vector{String},))
@@ -36,15 +38,21 @@ instrumented = replace(original,
         capture = mktempdir($(repr(out)); prefix="failure-", cleanup=false)
         cp(bundle_dir, joinpath(capture, "bundle"))
         write(joinpath(capture, "compile.log"), output)
+        for threads in ["1,0", "1,1", "2,0"]
+            for trial in 1:3
+                thread_code, thread_output, thread_timeout = _run_command_with_timeout(addenv(`\$(abspath(run_path))`, "JULIA_NUM_THREADS" => threads); timeout_s=30.0, log_label="threads")
+                println("DIAG thread control threads=\$threads trial=\$trial exit=\$thread_code timeout=\$thread_timeout output=\$(repr(thread_output))")
+            end
+        end
         if haskey(ENV, "TRIM_CDB")
-            debugger_commands = "sxe -c \\\".exr -1; .ecxr; k; lm; r; u @rip-20 @rip+20; q\\\" av; g"
+            debugger_commands = "sxe -c \\\".exr -1; .ecxr; k; ~*k; lm; r; u @rip-20 @rip+20; q\\\" av; g"
             _, debug_output, _ = _run_command_with_timeout(`\$(ENV["TRIM_CDB"]) -G -c \$debugger_commands \$(abspath(run_path))`; timeout_s=120.0, log_label="debugger")
             write(joinpath(capture, "debugger.log"), debug_output)
             println(debug_output)
         end
         println("---- trim executable output (\$(script_file)) ----")
         """,
-    "for (script_file, output_name) in trim_workloads" => "for repetition in 1:10, (script_file, output_name) in trim_workloads")
+    "for (script_file, output_name) in trim_workloads" => "for repetition in 1:3, (script_file, output_name) in trim_workloads")
 write(joinpath(@__DIR__, "trim_compile_tests.jl"), instrumented)
 try
     Pkg.test("StructUtils"; coverage=true, julia_args=["--check-bounds=yes", "--compiled-modules=yes", "--depwarn=yes"], force_latest_compatible_version=false, allow_reresolve=true)
