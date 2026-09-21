@@ -9,14 +9,16 @@ jobs:
       fail-fast: false
       matrix:
         sample: [release, main]
+        version: ['1.13.0', 'nightly']
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: julia-actions/setup-julia@v3
         with:
-          version: '1.13.0'
+          version: ${{ matrix.version }}
           arch: x64
+          show-versioninfo: true
       - uses: actions/cache/restore@v4
         with:
           key: julia-cache;workflow=CI;job=test;os=Windows;version=pre;os=windows-latest;arch=x64;run_id=35421864581;run_attempt=1
@@ -61,5 +63,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: windows-trim-diagnosis-${{ matrix.sample }}
+          name: windows-trim-diagnosis-${{ matrix.sample }}-${{ matrix.version }}
           path: trim-diagnosis

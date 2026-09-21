@@ -43,6 +43,8 @@ failures = String[]
 # Run the package harness with its original command, environment, and output name.
 original = read(joinpath(@__DIR__, "trim_compile_tests.jl"), String)
 instrumented = replace(original,
+    # This diagnostic must exercise the workload on nightly Julia too.
+    "const _TRIM_PRE_RELEASE = !isempty(VERSION.prerelease)" => "const _TRIM_PRE_RELEASE = false",
     "println(\"[trim] temp environment ready\")" => "println(output); println(\"[trim] temp environment ready\")",
     "println(\"---- trim executable output (\$(script_file)) ----\")" => """
         capture = mktempdir($(repr(out)); prefix="failure-", cleanup=false)
