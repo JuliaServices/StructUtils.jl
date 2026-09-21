@@ -31,6 +31,13 @@ Base.Experimental.entrypoint(main, (Vector{String},))
 for (label, imports) in [("dates-only", "using Dates\n"), ("import-only", "using StructUtils\n")]
     write(joinpath(out, "$label.jl"), imports * read(minimal, String))
 end
+for (label, declarations, check) in [
+    ("dict", "", "Dict(:value => \"value\")[:value] == \"value\" || error(\"dict\")"),
+    ("date", "using Dates\n", "Dates.year(Date(2026, 1, 1)) == 2026 || error(\"date\")"),
+    ("nullable", "using StructUtils\nstruct Record\nvalue::Union{Nothing,String}\nend\n", "StructUtils.make(Record, Dict{Symbol,Union{Nothing,String}}(:value => \"value\")).value == \"value\" || error(\"nullable\")"),
+]
+    write(joinpath(out, "$label.jl"), declarations * replace(read(minimal, String), "    return 0" => "    $check\n    return 0"))
+end
 failures = String[]
 
 # Run the package harness with its original command, environment, and output name.
@@ -66,7 +73,7 @@ finally
     write(joinpath(@__DIR__, "trim_compile_tests.jl"), original)
 end
 
-for (label, ref) in [("minimal", nothing), ("dates-only", nothing), ("import-only", nothing), ("release", "2a2f3e8839b944d1b47744728e1cc617270292c0"), ("main", "56601dbdcf654311813581c71cc893d4bee7e49b")]
+for (label, ref) in [("minimal", nothing), ("dict", nothing), ("date", nothing), ("nullable", nothing), ("release", "2a2f3e8839b944d1b47744728e1cc617270292c0"), ("main", "56601dbdcf654311813581c71cc893d4bee7e49b")]
     script = joinpath(out, "$label.jl")
     if ref !== nothing
         checkout = joinpath(out, label * "-source")
