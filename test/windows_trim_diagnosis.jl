@@ -44,7 +44,7 @@ instrumented = replace(original,
     "for (script_file, output_name) in trim_workloads" => "for repetition in 1:10, (script_file, output_name) in trim_workloads")
 write(joinpath(@__DIR__, "trim_compile_tests.jl"), instrumented)
 try
-    Pkg.test("StructUtils"; julia_args=["--startup-file=no"])
+    Pkg.test("StructUtils"; coverage=true, julia_args=["--check-bounds=yes", "--compiled-modules=yes", "--depwarn=yes"], force_latest_compatible_version=false, allow_reresolve=true)
 catch err
     push!(failures, "original package harness")
     showerror(stdout, err)

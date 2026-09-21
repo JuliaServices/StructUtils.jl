@@ -53,8 +53,10 @@ jobs:
           if (!(Test-Path $cdb)) { throw 'CDB not installed' }
           "TRIM_CDB=$cdb" >> $env:GITHUB_ENV
       - name: Compare startup workloads
-        shell: julia --startup-file=no --history-file=no {0}
-        run: include(joinpath(ENV["GITHUB_WORKSPACE"], "test", "windows_trim_diagnosis.jl"))
+        shell: bash
+        env:
+          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+        run: julia --startup-file=no --history-file=no test/windows_trim_diagnosis.jl
       - uses: actions/upload-artifact@v4
         if: always()
         with:
