@@ -28,6 +28,9 @@ function @main(args::Vector{String})::Cint
 end
 Base.Experimental.entrypoint(main, (Vector{String},))
 """)
+for (label, imports) in [("dates-only", "using Dates\n"), ("import-only", "using StructUtils\n")]
+    write(joinpath(out, "$label.jl"), imports * read(minimal, String))
+end
 failures = String[]
 
 # Run the package harness with its original command, environment, and output name.
@@ -63,8 +66,8 @@ finally
     write(joinpath(@__DIR__, "trim_compile_tests.jl"), original)
 end
 
-for (label, ref) in [("minimal", nothing), ("release", "2a2f3e8839b944d1b47744728e1cc617270292c0"), ("main", "56601dbdcf654311813581c71cc893d4bee7e49b")]
-    script = minimal
+for (label, ref) in [("minimal", nothing), ("dates-only", nothing), ("import-only", nothing), ("release", "2a2f3e8839b944d1b47744728e1cc617270292c0"), ("main", "56601dbdcf654311813581c71cc893d4bee7e49b")]
+    script = joinpath(out, "$label.jl")
     if ref !== nothing
         checkout = joinpath(out, label * "-source")
         run(`git worktree add --detach $checkout $ref`)
