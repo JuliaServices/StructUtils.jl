@@ -8,7 +8,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sample: [1, 2, 3]
+        sample: [release, main]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -56,6 +56,7 @@ jobs:
         shell: bash
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+          TRIM_SOURCE: ${{ matrix.sample }}
         run: julia --startup-file=no --history-file=no test/windows_trim_diagnosis.jl
       - uses: actions/upload-artifact@v4
         if: always()

@@ -2,6 +2,9 @@ using InteractiveUtils, Pkg
 
 versioninfo(verbose=true)
 root = dirname(@__DIR__)
+if get(ENV, "TRIM_SOURCE", "main") == "release"
+    run(`git restore --source=2a2f3e8839b944d1b47744728e1cc617270292c0 -- src test`)
+end
 out = mkpath(joinpath(root, "trim-diagnosis"))
 project = mkpath(joinpath(out, "project"))
 Pkg.activate(project)
