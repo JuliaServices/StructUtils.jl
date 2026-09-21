@@ -15,7 +15,7 @@ jobs:
           arch: x64
       - name: Compare startup workloads
         shell: julia --startup-file=no --history-file=no {0}
-        run: include("test/windows_trim_diagnosis.jl")
+        run: include(joinpath(ENV["GITHUB_WORKSPACE"], "test", "windows_trim_diagnosis.jl"))
       - uses: actions/upload-artifact@v4
         if: always()
         with:
