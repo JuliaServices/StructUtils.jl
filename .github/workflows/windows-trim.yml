@@ -1,0 +1,23 @@
+name: Windows trim diagnosis
+on:
+  pull_request:
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.13.0'
+          arch: x64
+      - name: Compare startup workloads
+        shell: julia --startup-file=no --history-file=no {0}
+        run: include("test/windows_trim_diagnosis.jl")
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-trim-diagnosis
+          path: trim-diagnosis
