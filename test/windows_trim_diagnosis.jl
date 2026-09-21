@@ -24,6 +24,34 @@ end
 Base.Experimental.entrypoint(main, (Vector{String},))
 """)
 failures = String[]
+
+# Run the package harness with its original command, environment, and output name.
+original = read(joinpath(@__DIR__, "trim_compile_tests.jl"), String)
+instrumented = replace(original,
+    "println(\"[trim] temp environment ready\")" => "println(output); println(\"[trim] temp environment ready\")",
+    "println(\"---- trim executable output (\$(script_file)) ----\")" => """
+        capture = mktempdir($(repr(out)); prefix="failure-", cleanup=false)
+        cp(bundle_dir, joinpath(capture, "bundle"))
+        write(joinpath(capture, "compile.log"), output)
+        if haskey(ENV, "TRIM_CDB")
+            debugger_commands = "sxe -c \\\".exr -1; .ecxr; k; lm; r; u @rip-20 @rip+20; q\\\" av; g"
+            _, debug_output, _ = _run_command_with_timeout(`\$(ENV["TRIM_CDB"]) -G -c \$debugger_commands \$(abspath(run_path))`; timeout_s=120.0, log_label="debugger")
+            write(joinpath(capture, "debugger.log"), debug_output)
+            println(debug_output)
+        end
+        println("---- trim executable output (\$(script_file)) ----")
+        """,
+    "for (script_file, output_name) in trim_workloads" => "for repetition in 1:10, (script_file, output_name) in trim_workloads")
+write(joinpath(@__DIR__, "trim_compile_tests.jl"), instrumented)
+try
+    Pkg.test("StructUtils"; julia_args=["--startup-file=no"])
+catch err
+    push!(failures, "original package harness")
+    showerror(stdout, err)
+finally
+    write(joinpath(@__DIR__, "trim_compile_tests.jl"), original)
+end
+
 for (label, ref) in [("minimal", nothing), ("release", "2a2f3e8839b944d1b47744728e1cc617270292c0"), ("main", "56601dbdcf654311813581c71cc893d4bee7e49b")]
     script = minimal
     if ref !== nothing
