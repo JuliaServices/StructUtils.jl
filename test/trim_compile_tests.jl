@@ -165,7 +165,12 @@ end
     if !_TRIM_SUPPORTED
         println("[trim] skip Julia < 1.12: JuliaC trim compilation is unavailable")
         @test true
-    elseif _TRIM_PRE_RELEASE
+    elseif Sys.iswindows() && VERSION.major == 1 && VERSION.minor == 13
+        # Windows Julia 1.13 can crash during trimmed executable startup.
+        # This appears fixed in Julia 1.14 nightly; keep Windows nightly coverage active.
+        println("[trim] skip Windows Julia 1.13: trimmed executable startup can crash; nightly appears fixed")
+        @test_skip false
+    elseif _TRIM_PRE_RELEASE && !Sys.iswindows()
         println("[trim] skip prerelease Julia: trim verifier behavior is not stable yet")
         @test true
     else
