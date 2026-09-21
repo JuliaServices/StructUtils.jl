@@ -51,6 +51,12 @@ for (label, ref) in [("minimal", nothing), ("release", "2a2f3e8839b944d1b4774472
                     push!(failures, "$label-$build run-$attempt")
                 end
             end
+            if any(startswith("$label-$build run"), failures) && haskey(ENV, "TRIM_CDB")
+                commands = "sxe -c \".exr -1; .ecxr; k; lm; r; u @rip-20 @rip+20; q\" av; g"
+                code, output, timeout = _run_command_with_timeout(`$(ENV["TRIM_CDB"]) -G -c $commands $(joinpath(bundle, "bin", "probe.exe"))`; timeout_s=120.0, log_label="debugger")
+                write("debugger.log", output)
+                println("DIAG debugger label=$label build=$build exit=$code timeout=$timeout\n$output")
+            end
         end
     end
 end
