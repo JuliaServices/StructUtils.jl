@@ -275,6 +275,11 @@ implementation returns `true` for multidimensional `<:AbstractArray` types
 
 Override this for custom array types that have a fixed, known size but
 are not growable (e.g. `StaticArrays.StaticArray`).
+
+Multidimensional construction rejects input that exceeds the discovered shape or
+leaves an element uninitialized. It tracks filled elements in a one-bit-per-element
+map and scans that map once after traversing the source. In-place `make!` updates
+can still supply only part of an existing array.
 """
 function fixedsizearray end
 
@@ -960,17 +965,30 @@ struct MultiDimClosure{S,A}
     arr::A
     dims::Vector{Int}
     cur_dim::Base.RefValue{Int}
+    # Indexed sources can arrive out of order or overwrite an earlier element.
+    filled::Union{Nothing,BitVector}
 end
 
+MultiDimClosure(style, arr, dims, cur_dim) = MultiDimClosure(style, arr, dims, cur_dim, nothing)
+
 function (f::MultiDimClosure{S,A})(i::Int, val) where {S,A}
+    if f.filled !== nothing
+        1 <= i <= size(f.arr, f.cur_dim[]) || throw(DimensionMismatch("input exceeds multidimensional array shape"))
+    end
     f.dims[f.cur_dim[]] = i
     if arraylike(f.style, val) && f.cur_dim[] > 1
         f.cur_dim[] -= 1
         st = applyeach(f.style, f, val)
         f.cur_dim[] += 1
-    else
+    elseif f.filled === nothing
         val, st = make(f.style, eltype(f.arr), val)
         setindex!(f.arr, val, f.dims...)
+    else
+        indices = ntuple(dim -> f.dims[dim], Val(ndims(f.arr)))
+        checkbounds(Bool, f.arr, indices...) || throw(DimensionMismatch("input exceeds multidimensional array shape"))
+        val, st = make(f.style, eltype(f.arr), val)
+        f.arr[indices...] = val
+        f.filled[LinearIndices(f.arr)[indices...]] = true
     end
     return st
 end
@@ -1310,7 +1328,9 @@ function makearray(style, ::Type{T}, source) where {T}
         N = length(dims)
         if N > 1
             buf = reshape(data, dims)
-            st = applyeach(style, MultiDimClosure(style, buf, ones(Int, N), Ref(N)), source)
+            filled = falses(L)
+            st = applyeach(style, MultiDimClosure(style, buf, ones(Int, N), Ref(N), filled), source)
+            all(filled) || throw(DimensionMismatch("input does not fill multidimensional array shape"))
         else
             st = applyeach(style, FixedArrayClosure(data, style, Ref(1)), source)
         end
