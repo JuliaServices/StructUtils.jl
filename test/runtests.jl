@@ -637,6 +637,7 @@ end
 end
 
 using StaticArrays
+include("multidimensional_shape.jl")
 
 @testset "fixedsizearray trait" begin
     @test StructUtils.fixedsizearray(Matrix{Int}) == true
