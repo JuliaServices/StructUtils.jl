@@ -1290,8 +1290,9 @@ struct FixedArrayClosure{A,S}
 end
 
 function (f::FixedArrayClosure{A,S})(_, v) where {A,S}
-    val, st = make(f.style, eltype(f.arr), v)
     i = f.idx[]
+    i <= length(f.arr) || throw(DimensionMismatch("too many elements for fixed-size array"))
+    val, st = make(f.style, eltype(f.arr), v)
     @inbounds f.arr[i] = val
     f.idx[] = i + 1
     return st
@@ -1312,7 +1313,9 @@ function makearray(style, ::Type{T}, source) where {T}
             buf = reshape(data, dims)
             st = applyeach(style, MultiDimClosure(style, buf, ones(Int, N), Ref(N)), source)
         else
-            st = applyeach(style, FixedArrayClosure(data, style, Ref(1)), source)
+            idx = Ref(1)
+            st = applyeach(style, FixedArrayClosure(data, style, idx), source)
+            idx[] == L + 1 || throw(DimensionMismatch("too few elements for fixed-size array"))
         end
         return arrayfromdata(T, data, dims), st
     else

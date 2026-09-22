@@ -1,6 +1,15 @@
 using Test, Dates, UUIDs, StructUtils
 
 struct TestStyle <: StructUtils.StructStyle end
+struct FixedVectorStyle <: StructUtils.StructStyle
+    seen::Vector{String}
+end
+StructUtils.lowerkey(::FixedVectorStyle, k) = string(k)
+StructUtils.defaultstate(::FixedVectorStyle) = :fixed_vector
+function StructUtils.lift(st::FixedVectorStyle, ::Type{Int}, x::String)
+    push!(st.seen, x)
+    return parse(Int, x), :lifted
+end
 struct StrictUnknownFieldStyle <: StructUtils.StructStyle end
 struct UnknownFieldTestError <: Exception
     target::Any
@@ -652,6 +661,34 @@ end
     @test StructUtils.make(SMatrix{2,2,Int}, [[1, 3], [2, 4]]) == SMatrix{2,2,Int}((1, 3, 2, 4))
     @test StructUtils.make(MVector{3,Int}, [1, 2, 3]) == MVector{3,Int}((1, 2, 3))
     @test StructUtils.make(Vector{SVector{2,Int}}, [[1, 2], [3, 4]]) == [SVector{2,Int}((1, 2)), SVector{2,Int}((3, 4))]
+end
+
+@testset "fixed-size vector input length" begin
+    for V in (SVector, MVector), E in (Int, String)
+        values = E === Int ? [1, 2] : ["a", "b"]
+        T = V{2,E}
+        @test StructUtils.make(T, values) == T(values)
+        @test_throws DimensionMismatch StructUtils.make(T, values[1:1])
+        @test_throws DimensionMismatch StructUtils.make(T, vcat(values, values[1:1]))
+        @test StructUtils.make(V{0,E}, E[]) == V{0,E}()
+        @test_throws DimensionMismatch StructUtils.make(V{0,E}, values)
+    end
+    for n in (1, 2, 3)
+        visits = Ref(0)
+        source = (x for x in Iterators.filter(x -> (visits[] += 1; true), 1:n))
+        @test Base.IteratorSize(typeof(source)) isa Base.SizeUnknown
+        if n == 2
+            @test StructUtils.make(SVector{2,Int}, source) == SVector(1, 2)
+        else
+            @test_throws DimensionMismatch StructUtils.make(SVector{2,Int}, source)
+        end
+        @test visits[] == n
+    end
+    style = FixedVectorStyle(String[])
+    result, state = StructUtils.make(style, SVector{2,Int}, ["1", "2"])
+    @test result == SVector(1, 2)
+    @test state === :fixed_vector
+    @test style.seen == ["1", "2"]
 end
 
 @testset "absent fields take the null their type admits" begin
