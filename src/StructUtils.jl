@@ -446,7 +446,20 @@ lift(::Type{Dates.Time}, x::AbstractString) = _lifttime(String(x))
 # diagnostics are too dynamic for static compilation (`juliac --trim`); these
 # accept exactly the grammar the default formats do — variable-width numeric
 # fields, an optional year sign, progressively optional smaller fields, and a
-# 1-3 digit fraction — and construct through the validating constructors.
+# fraction — and construct through the validating constructors. A `DateTime`
+# fraction has at most three digits. A `Time` fraction has the running Dates'
+# precision, and more digits only if they are zeros.
+
+# Julia 1.14 parses a `Time` fraction to the nanosecond (Dates' `n` format code);
+# earlier versions stop at the millisecond. Follow the running Dates.
+const _TIME_FRACTION_DIGITS = try
+    Dates.Time("00:00:00.000000001")
+    9
+catch err
+    err isa ArgumentError || rethrow()
+    3
+end
+
 @inline function _isodigits(s::String, i::Int, maxwidth::Int)
     n = ncodeunits(s)
     value = 0
@@ -486,7 +499,10 @@ macro _isodelim(c)
     end)
 end
 
-function _isoparse(s::String, withdate::Bool, withtime::Bool)
+# Reads up to `fracdigits` fraction digits; the result counts units of 10^-fracdigits
+# seconds. With `extrazeros`, zero digits may follow them.
+function _isoparse(s::String, withdate::Bool, withtime::Bool, fracdigits::Int=3,
+                   extrazeros::Bool=false)
     errmsg = withtime ? (withdate ? "invalid ISO 8601 date-time" : "invalid ISO 8601 time") : "invalid ISO 8601 date"
     n = ncodeunits(s)
     i = 1
@@ -496,7 +512,7 @@ function _isoparse(s::String, withdate::Bool, withtime::Bool)
     h = 0
     mi = 0
     sec = 0
-    ms = 0
+    frac = 0
     if withdate
         negative = _isochar(s, i, '-')
         (negative || _isochar(s, i, '+')) && (i += 1)
@@ -522,16 +538,18 @@ function _isoparse(s::String, withdate::Bool, withtime::Bool)
     @_isodelim '.'
     i > n && @goto done
     fraction_start = i
-    ms, i = _isodigits(s, i, 3)
-    ms == -1 && throw(ArgumentError(errmsg))
-    # the fraction is at most three digits (milliseconds), scaled as if
-    # right-padded: ".4" is 400 milliseconds
-    for _ = 1:(3 - (i - fraction_start))
-        ms *= 10
+    frac, i = _isodigits(s, i, fracdigits)
+    frac == -1 && throw(ArgumentError(errmsg))
+    # scale as if right-padded: ".4" is 400 milliseconds
+    for _ = 1:(fracdigits - (i - fraction_start))
+        frac *= 10
+    end
+    while extrazeros && _isochar(s, i, '0')
+        i += 1
     end
     @label done
     i > n || throw(ArgumentError(errmsg))
-    return y, m, d, h, mi, sec, ms
+    return y, m, d, h, mi, sec, frac
 end
 
 function _liftdate(s::String)
@@ -571,8 +589,10 @@ function _liftdatetime(s::String)
 end
 
 function _lifttime(s::String)
-    _, _, _, h, mi, sec, ms = _isoparse(s, false, true)
-    return Dates.Time(h, mi, sec, ms)
+    _, _, _, h, mi, sec, frac = _isoparse(s, false, true, _TIME_FRACTION_DIGITS, true)
+    ms, rest = divrem(frac * 10^(9 - _TIME_FRACTION_DIGITS), 1_000_000)
+    us, ns = divrem(rest, 1_000)
+    return Dates.Time(h, mi, sec, ms, us, ns)
 end
 
 function lift(::Type{T}, x::AbstractString) where {T<:Enum}
