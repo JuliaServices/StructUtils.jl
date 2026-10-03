@@ -6,6 +6,11 @@ using Test, Dates, UUIDs, StructUtils
 struct ITagStyle <: StructUtils.StructStyle end
 StructUtils.fieldtagkey(::ITagStyle) = :itag
 
+# a style that reads its own date text, like a database wire format
+struct IWireStyle <: StructUtils.StructStyle end
+StructUtils.lift(::IWireStyle, ::Type{DateTime}, x::String) =
+    (unix2datetime(parse(Int, chopprefix(x, "unix:"))), nothing)
+
 mutable struct ICountStyle <: StructUtils.StructStyle
     calls::Int
 end
@@ -117,6 +122,36 @@ const IEVENT_SRC = Dict{String,Any}(
         # Symbol keys and Vector{Pair} sources
         @test StructUtils.make(ITier, Dict(:name => "s", :amount => 5)).amount == 5
         @test StructUtils.make(ITier, ["name" => "vp"]).currency == "usd"
+    end
+
+    @testset "ISO date lifts" begin
+        lift = StructUtils.lift
+        @test lift(DateTime, "2026-10-28T18:00:00") == DateTime(2026, 10, 28, 18)
+        @test lift(DateTime, "2026-10-28 18:00:00") == DateTime(2026, 10, 28, 18)
+        # a UTC designator or offset gives the UTC instant
+        @test lift(DateTime, "2026-10-29T00:00:00Z") == DateTime(2026, 10, 29)
+        @test lift(DateTime, "2026-10-28T18:00:00-06:00") == DateTime(2026, 10, 29)
+        @test lift(DateTime, "2026-10-28T18:00:00.5+05:30") == DateTime(2026, 10, 28, 12, 30, 0, 500)
+        # fraction digits beyond milliseconds are truncated
+        @test lift(DateTime, "2026-10-28T18:00:00.123456+00:00") == DateTime(2026, 10, 28, 18, 0, 0, 123)
+        @test lift(Time, "18:00:00.25") == Time(18, 0, 0, 250)
+        @test lift(Date, "2026-10-28") == Date(2026, 10, 28)
+        for bad in ("2026-10-28T18:00:00garbage", "2026-10-28T18:00:00Zjunk",
+                    "2026-10-28T18:00:00-06", "2026-10-28T18:00:00+0600",
+                    "2026-10-28T18:00:00+24:00", "2026-10-28T18:00:00+01:60",
+                    "2026-10-28T18:00:00.", "2026-10-28T18:00:00.1 ")
+            @test_throws ArgumentError lift(DateTime, bad)
+        end
+        @test_throws ArgumentError lift(Time, "18:00:00-06:00")
+        @test_throws ArgumentError lift(Date, "2026-10-28junk")
+        # the interpreter produces exactly what the lifts do
+        src = Dict{String,Any}("name" => "x", "at" => "2026-10-28T18:00:00-06:00")
+        @test StructUtils.make(IEvent, src).at == DateTime(2026, 10, 29)
+        src["at"] = "2026-10-28T18:00:00junk"
+        @test_throws ArgumentError StructUtils.make(IEvent, src)
+        # and a style's own date lift wins over the ISO default
+        src["at"] = "unix:86400"
+        @test StructUtils.make(IEvent, src, IWireStyle()).at == DateTime(1970, 1, 2)
     end
 
     @testset "defaults policies" begin

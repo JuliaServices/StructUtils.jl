@@ -77,6 +77,19 @@ function run_interp_trim_sample()
     v isa TLoc || error("venue")
     (v::TLoc).lat == 40.1 || error("lat")
     (v::TLoc).tags == [:indoor] || error("tags")
+    # an offset normalizes to UTC; unparsed trailing text is an error
+    zsrc = Dict{String,Any}()
+    zsrc["name"] = "z"
+    zsrc["at"] = "2026-10-28T18:00:00-06:00"
+    (StructUtils.make(TEvent, zsrc)::TEvent).at == DateTime(2026, 10, 29) || error("offset")
+    zsrc["at"] = "2026-10-28T18:00:00junk"
+    rejected = false
+    try
+        StructUtils.make(TEvent, zsrc)
+    catch
+        rejected = true
+    end
+    rejected || error("trailing text")
     length(e.tiers) == 2 || error("tiers")
     e.tiers[1].currency == "eur" || error("cur1")
     e.tiers[2].currency == "usd" || error("cur2")

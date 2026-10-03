@@ -776,73 +776,94 @@ end
 
 # ---------------- leaf lifting (closed kinds; exact-typed results) ----------------
 
-# ISO 8601 fast paths: Dates' DateFormat machinery is both slower and not
-# trim-verifiable in its error paths
-@inline function _dig(cs::String, i::Int, name::String)
-    b = codeunit(cs, i)
-    (UInt8('0') <= b <= UInt8('9')) || _liftfail(KIND_DATE, name)
+# ISO 8601 parsers for the default Date/DateTime/Time lifts: Dates'
+# DateFormat machinery is both slower and not trim-verifiable in its error
+# paths. Malformed input, including any unparsed trailing text, throws.
+@noinline _isofail(what::String, s::String) =
+    throw(ArgumentError(string("invalid ISO 8601 ", what, " value \"", s, "\"")))
+
+@inline function _dig(s::String, i::Int, what::String)
+    b = codeunit(s, i)
+    (UInt8('0') <= b <= UInt8('9')) || _isofail(what, s)
     return (b - UInt8('0')) % Int
 end
 
-# "yyyy-mm-dd" -> Date, errors mentioning the field name
-function _parse_iso_date(s::String, name::String)
+# "yyyy-mm-dd" -> Date
+function _parse_iso_date(s::String)
     (ncodeunits(s) == 10 && codeunit(s, 5) == UInt8('-') && codeunit(s, 8) == UInt8('-')) ||
-        _liftfail(KIND_DATE, name)
-    y = _dig(s, 1, name) * 1000 + _dig(s, 2, name) * 100 + _dig(s, 3, name) * 10 + _dig(s, 4, name)
-    m = _dig(s, 6, name) * 10 + _dig(s, 7, name)
-    d = _dig(s, 9, name) * 10 + _dig(s, 10, name)
+        _isofail("Date", s)
+    y = _dig(s, 1, "Date") * 1000 + _dig(s, 2, "Date") * 100 + _dig(s, 3, "Date") * 10 + _dig(s, 4, "Date")
+    m = _dig(s, 6, "Date") * 10 + _dig(s, 7, "Date")
+    d = _dig(s, 9, "Date") * 10 + _dig(s, 10, "Date")
     return Dates.Date(y, m, d)
 end
 
-# "HH:MM:SS[.sss]" starting at `off` -> (hour, minute, second, millisecond)
-function _parse_iso_timeparts(s::String, off::Int, name::String)
+# "HH:MM:SS[.fraction]" starting at `off` -> (hour, minute, second,
+# millisecond, index just past the time); fraction digits beyond
+# milliseconds are truncated
+function _parse_iso_timeparts(s::String, off::Int, what::String)
     n = ncodeunits(s)
     (n >= off + 7 && codeunit(s, off + 2) == UInt8(':') && codeunit(s, off + 5) == UInt8(':')) ||
-        _liftfail(KIND_TIME, name)
-    h = _dig(s, off, name) * 10 + _dig(s, off + 1, name)
-    mi = _dig(s, off + 3, name) * 10 + _dig(s, off + 4, name)
-    sec = _dig(s, off + 6, name) * 10 + _dig(s, off + 7, name)
+        _isofail(what, s)
+    h = _dig(s, off, what) * 10 + _dig(s, off + 1, what)
+    mi = _dig(s, off + 3, what) * 10 + _dig(s, off + 4, what)
+    sec = _dig(s, off + 6, what) * 10 + _dig(s, off + 7, what)
     ms = 0
-    if n >= off + 9 && codeunit(s, off + 8) == UInt8('.')
+    i = off + 8
+    if i <= n && codeunit(s, i) == UInt8('.')
+        i += 1
         mult = 100
-        i = off + 9
-        while i <= n && mult > 0
-            b = codeunit(s, i)
-            (UInt8('0') <= b <= UInt8('9')) || break
-            ms += ((b - UInt8('0')) % Int) * mult
+        while i <= n && UInt8('0') <= codeunit(s, i) <= UInt8('9')
+            ms += ((codeunit(s, i) - UInt8('0')) % Int) * mult
             mult = div(mult, 10)
             i += 1
         end
+        # a "." must be followed by at least one digit
+        mult < 100 || _isofail(what, s)
     end
-    return h, mi, sec, ms
+    return h, mi, sec, ms, i
 end
 
-# "yyyy-mm-ddTHH:MM:SS[.sss]" -> DateTime, errors mentioning the field name
-function _parse_iso_datetime(s::String, name::String)
+# "yyyy-mm-dd(T| )HH:MM:SS[.fraction][Z|±HH:MM]" -> DateTime. With a UTC
+# designator or offset the result is the UTC instant; without one the
+# value is taken as written.
+function _parse_iso_datetime(s::String)
     n = ncodeunits(s)
     (n >= 19 && codeunit(s, 5) == UInt8('-') && codeunit(s, 8) == UInt8('-') &&
      (codeunit(s, 11) == UInt8('T') || codeunit(s, 11) == UInt8(' '))) ||
-        _liftfail(KIND_DATETIME, name)
-    y = _dig(s, 1, name) * 1000 + _dig(s, 2, name) * 100 + _dig(s, 3, name) * 10 + _dig(s, 4, name)
-    m = _dig(s, 6, name) * 10 + _dig(s, 7, name)
-    d = _dig(s, 9, name) * 10 + _dig(s, 10, name)
-    h, mi, sec, ms = _parse_iso_timeparts(s, 12, name)
-    return Dates.DateTime(y, m, d, h, mi, sec, ms)
+        _isofail("DateTime", s)
+    y = _dig(s, 1, "DateTime") * 1000 + _dig(s, 2, "DateTime") * 100 + _dig(s, 3, "DateTime") * 10 + _dig(s, 4, "DateTime")
+    m = _dig(s, 6, "DateTime") * 10 + _dig(s, 7, "DateTime")
+    d = _dig(s, 9, "DateTime") * 10 + _dig(s, 10, "DateTime")
+    h, mi, sec, ms, i = _parse_iso_timeparts(s, 12, "DateTime")
+    dt = Dates.DateTime(y, m, d, h, mi, sec, ms)
+    i > n && return dt
+    sign = codeunit(s, i)
+    i == n && sign == UInt8('Z') && return dt
+    (i + 5 == n && (sign == UInt8('+') || sign == UInt8('-')) && codeunit(s, i + 3) == UInt8(':')) ||
+        _isofail("DateTime", s)
+    oh = _dig(s, i + 1, "DateTime") * 10 + _dig(s, i + 2, "DateTime")
+    om = _dig(s, i + 4, "DateTime") * 10 + _dig(s, i + 5, "DateTime")
+    (oh <= 23 && om <= 59) || _isofail("DateTime", s)
+    offset = Dates.Minute(60 * oh + om)
+    return sign == UInt8('+') ? dt - offset : dt + offset
+end
+
+# "HH:MM:SS[.fraction]" -> Time
+function _parse_iso_time(s::String)
+    h, mi, sec, ms, i = _parse_iso_timeparts(s, 1, "Time")
+    i > ncodeunits(s) || _isofail("Time", s)
+    return Dates.Time(h, mi, sec, ms)
 end
 
 # the default string lifts for the stdlib date types use these hand-rolled
-# parsers everywhere (not just inside the interpreter): the ISO defaults are
-# what `Date(::String)` accepts anyway, they are faster than the DateFormat
-# machinery, and — decisively — DateFormat's error paths are not
-# trim-verifiable, which poisoned every typed date parse under `--trim`.
+# parsers everywhere (not just inside the interpreter): they are faster than
+# the DateFormat machinery, and — decisively — DateFormat's error paths are
+# not trim-verifiable, which poisoned every typed date parse under `--trim`.
 # Custom formats still route through the `dateformat` fieldtag.
-lift(::Type{Dates.Date}, x::AbstractString) = _parse_iso_date(String(x), "Date")
-lift(::Type{Dates.DateTime}, x::AbstractString) = _parse_iso_datetime(String(x), "DateTime")
-# default Date/DateTime/Time lifts parse the ISO forms above
-function lift(::Type{Dates.Time}, x::AbstractString)
-    h, mi, sec, ms = _parse_iso_timeparts(String(x), 1, "Time")
-    return Dates.Time(h, mi, sec, ms)
-end
+lift(::Type{Dates.Date}, x::AbstractString) = _parse_iso_date(String(x))
+lift(::Type{Dates.DateTime}, x::AbstractString) = _parse_iso_datetime(String(x))
+lift(::Type{Dates.Time}, x::AbstractString) = _parse_iso_time(String(x))
 
 # lift an already-materialized tree scalar to the spec's exact type; `v` is
 # never `nothing` here (nulls are handled by the caller)
@@ -860,16 +881,17 @@ function liftleaf(style::StructStyle, kind::Int8, @nospecialize(ft), @nospeciali
         v isa Bool && return v
     elseif kind == KIND_DATE
         v isa Dates.Date && return v
-        v isa String && return _parse_iso_date(v, name)
+        # date strings go through the style's `lift`, so a style that reads
+        # its own date text (a database wire format, say) and any `lift`
+        # overload apply here as on the hot path; the target type is a
+        # constant, so the call still resolves statically
+        v isa String && return lift(style, Dates.Date, v)[1]::Dates.Date
     elseif kind == KIND_DATETIME
         v isa Dates.DateTime && return v
-        v isa String && return _parse_iso_datetime(v, name)
+        v isa String && return lift(style, Dates.DateTime, v)[1]::Dates.DateTime
     elseif kind == KIND_TIME
         v isa Dates.Time && return v
-        if v isa String
-            h, mi, sec, ms = _parse_iso_timeparts(v, 1, name)
-            return Dates.Time(h, mi, sec, ms)
-        end
+        v isa String && return lift(style, Dates.Time, v)[1]::Dates.Time
     elseif kind == KIND_UUID
         v isa UUID && return v
         v isa String && return UUID(v)
