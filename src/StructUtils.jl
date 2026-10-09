@@ -22,6 +22,19 @@ are defined for by default.
 """
 struct DefaultStyle <: StructStyle end
 
+"""
+    StructUtils.traitstyle(style::StructStyle) -> StructStyle
+
+Return the style used to classify source values and target types during construction.
+The default returns `style`. A wrapper style can return its inner style so that
+`dictlike`, `arraylike`, `structlike`, `nulllike`, `noarg`, and `fixedsizearray`
+methods dispatch on the inner style. Construction retains the original style for
+traversal, field metadata, `initialize`, `lift`, and `liftkey`.
+
+This hook does not change direct calls to classification functions.
+"""
+traitstyle(style::StructStyle) = style
+
 include("macros.jl")
 
 """
@@ -208,7 +221,7 @@ for `<:AbstractArray` types.
 function initialize end
 
 initialize(st::StructStyle, T::Type, @nospecialize(source)) =
-    arraylike(st, T) ? T(undef, 0) : T()
+    arraylike(traitstyle(st), T) ? T(undef, 0) : T()
 
 function initialize(st::StructStyle, ::Type{A}, source) where {A<:AbstractArray}
     if ndims(A) > 1
@@ -915,7 +928,7 @@ end # VERSION < v"1.10"
 # "[[[1.0,2.0]]]" => (2, 1, 1)
 # length of innermost array is 1st dim
 function discover_dims(style, x, ndims::Int)
-    @assert arraylike(style, x)
+    @assert arraylike(traitstyle(style), x)
     len = applylength(x)
     if ndims == 1
         return (len,)
@@ -923,7 +936,7 @@ function discover_dims(style, x, ndims::Int)
 
     ret = (
         applyeach(x) do _, v
-            return arraylike(style, v) ? EarlyReturn(discover_dims(style, v, ndims - 1)) : EarlyReturn(())
+            return arraylike(traitstyle(style), v) ? EarlyReturn(discover_dims(style, v, ndims - 1)) : EarlyReturn(())
         end
     )::EarlyReturn
     return (ret.value..., len)
@@ -964,7 +977,7 @@ end
 
 function (f::MultiDimClosure{S,A})(i::Int, val) where {S,A}
     f.dims[f.cur_dim[]] = i
-    if arraylike(f.style, val) && f.cur_dim[] > 1
+    if arraylike(traitstyle(f.style), val) && f.cur_dim[] > 1
         f.cur_dim[] -= 1
         st = applyeach(f.style, f, val)
         f.cur_dim[] += 1
@@ -1036,13 +1049,13 @@ end
 # Abstract collection targets are not constructible, so when the incoming value
 # already satisfies the abstract type we must preserve it instead of rebuilding.
 @inline abstractcollectionpassthrough(style::StructStyle, ::Type{T}, source) where {T} =
-    isabstracttype(T) && source isa T && (dictlike(style, T) || arraylike(style, T))
+    isabstracttype(T) && source isa T && (dictlike(traitstyle(style), T) || arraylike(traitstyle(style), T))
 
 # Non-struct sources opt into representation lowering at the root. Structural
 # sources stay intact so a custom `lower` method can call `make` to traverse
 # their fields without immediately calling itself again.
 @inline _lowerrootsource(style::StructStyle, source) =
-    structlike(style, source) ? source : lower(style, source)
+    structlike(traitstyle(style), source) ? source : lower(style, source)
 
 # Optional integrations can select a target when one member of a Union has
 # package-specific meaning. Returning `nothing` leaves the normal Union
@@ -1083,12 +1096,12 @@ end
     length(members) == 2 || return :(return nothing)
     a, b = members
     return quote
-        aa = arraylike(style, $a)
-        ba = arraylike(style, $b)
+        aa = arraylike(traitstyle(style), $a)
+        ba = arraylike(traitstyle(style), $b)
         if aa && !ba
-            return _rewrapunionmember(T, arraylike(style, source) ? $a : $b)
+            return _rewrapunionmember(T, arraylike(traitstyle(style), source) ? $a : $b)
         elseif ba && !aa
-            return _rewrapunionmember(T, arraylike(style, source) ? $b : $a)
+            return _rewrapunionmember(T, arraylike(traitstyle(style), source) ? $b : $a)
         end
         return nothing
     end
@@ -1112,13 +1125,13 @@ function _make(style::StructStyle, ::Val{T}, source, tags) where {T}
             selected === nothing || return make(style, selected, source, tags)
         end
         if T >: Missing && T !== Missing
-            if nulllike(style, source)
+            if nulllike(traitstyle(style), source)
                 return make(style, Missing, source, tags)
             else
                 return make(style, nonmissingtype(T), source, tags)
             end
         elseif T >: Nothing && T !== Nothing
-            if nulllike(style, source)
+            if nulllike(traitstyle(style), source)
                 return make(style, Nothing, source, tags)
             else
                 return make(style, Base.nonnothingtype(T), source, tags)
@@ -1129,7 +1142,7 @@ function _make(style::StructStyle, ::Val{T}, source, tags) where {T}
             selected === nothing || return make(style, selected, source, tags)
         end
     end
-    if T <: Tuple || dictlike(style, T) || arraylike(style, T) || noarg(style, T) || structlike(style, T)
+    if T <: Tuple || dictlike(traitstyle(style), T) || arraylike(traitstyle(style), T) || noarg(traitstyle(style), T) || structlike(traitstyle(style), T)
         return make(style, T, source)
     else
         return lift(style, T, source, tags)
@@ -1147,13 +1160,13 @@ function make(style::StructStyle, ::Type{T}, source) where {T}
             selected === nothing || return make(style, selected, source)
         end
         if T >: Missing && T !== Missing
-            if nulllike(style, source)
+            if nulllike(traitstyle(style), source)
                 return make(style, Missing, source)
             else
                 return make(style, nonmissingtype(T), source)
             end
         elseif T >: Nothing && T !== Nothing
-            if nulllike(style, source)
+            if nulllike(traitstyle(style), source)
                 return make(style, Nothing, source)
             else
                 return make(style, Base.nonnothingtype(T), source)
@@ -1166,21 +1179,21 @@ function make(style::StructStyle, ::Type{T}, source) where {T}
     end
     if T <: Tuple
         return maketuple(style, T, _lowerrootsource(style, source))
-    elseif dictlike(style, T)
+    elseif dictlike(traitstyle(style), T)
         lowered = _lowerrootsource(style, source)
         if abstractcollectionpassthrough(style, T, lowered)
             return lowered, defaultstate(style)
         end
         return makedict(style, T, lowered)
-    elseif arraylike(style, T)
+    elseif arraylike(traitstyle(style), T)
         lowered = _lowerrootsource(style, source)
         if abstractcollectionpassthrough(style, T, lowered)
             return lowered, defaultstate(style)
         end
         return makearray(style, T, lowered)
-    elseif noarg(style, T)
+    elseif noarg(traitstyle(style), T)
         return makenoarg(style, T, _lowerrootsource(style, source))
-    elseif structlike(style, T)
+    elseif structlike(traitstyle(style), T)
         return makestruct(style, T, _lowerrootsource(style, source))
     else
         return lift(style, T, source)
@@ -1298,7 +1311,7 @@ function (f::FixedArrayClosure{A,S})(_, v) where {A,S}
 end
 
 function makearray(style, ::Type{T}, source) where {T}
-    if fixedsizearray(style, T)
+    if fixedsizearray(traitstyle(style), T)
         ET = eltype(T)
         dims = discover_dims(style, T, source)
         L = prod(dims)
@@ -1566,11 +1579,11 @@ make!(x::T, source; style::StructStyle=DefaultStyle()) where {T} = make!(style, 
 make!(::Type{T}, source; style::StructStyle=DefaultStyle()) where {T} = make!(style, T, source)
 
 function make!(style::StructStyle, x::T, source) where {T}
-    if dictlike(style, x)
+    if dictlike(traitstyle(style), x)
         _, st = makedict(style, x, source)
-    elseif arraylike(style, x)
+    elseif arraylike(traitstyle(style), x)
         _, st = makearray(style, x, source)
-    elseif noarg(style, x)
+    elseif noarg(traitstyle(style), x)
         _, st = makenoarg(style, x, source)
     else
         throw(ArgumentError("Type `$T` does not support in-place `make!`"))

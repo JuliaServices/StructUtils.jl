@@ -14,7 +14,7 @@ const Uninitialized = typeof(uninit)
     source isa Uninitialized && return Uninitialized
 
     logical = Base.typesplit(Base.unwrap_unionall(T), Uninitialized)
-    if logical <: Union{Missing,Nothing} && !StructUtils.nulllike(style, source)
+    if logical <: Union{Missing,Nothing} && !StructUtils.nulllike(StructUtils.traitstyle(style), source)
         throw(ArgumentError("cannot construct lazy field type `$T` from non-null source"))
     end
     return logical
