@@ -116,18 +116,13 @@ end
 
 # return all values of an object or elements of an array as a List
 # that satisfy a key-value function
-function _getindex(x, S::Union{typeof(~), Colon}, f::Base.Callable)
+function _getindex(x, S::Union{typeof(~), Colon}, f::Base.Callable, values=List())
     selectioncheck(x)
-    values = List()
     StructUtils.applyeach(x) do k, v
         f(k, v) && push!(values, v)
         if S == ~
-            if StructUtils.structlike(StructUtils.DefaultStyle(), v)
-                ret = _getindex(v, ~, f)
-                append!(values, ret)
-            elseif StructUtils.arraylike(StructUtils.DefaultStyle(), v)
-                ret = _getindex(v, ~, f)
-                append!(values, ret)
+            if StructUtils.structlike(StructUtils.DefaultStyle(), v) || StructUtils.arraylike(StructUtils.DefaultStyle(), v)
+                _getindex(v, ~, f, values)
             end
         end
         return

@@ -67,6 +67,20 @@ x = wrap(raw)
     eonly = collect(x[:, (k, v) -> k == "e"])
     @test eonly == [[4, 5, 6]]
 
+    visited = Any[]
+    predicate = (k, v) -> begin
+        push!(visited, k)
+        v isa Int && isodd(v)
+    end
+    odds = collect(x[~, predicate])
+    @test odds == [1, 3, 5, 7]
+    @test visited == Any["a", "b", "c", "d", "e", 1, 2, 3, "f", 1, "g", 2, "g"]
+    @test isempty(x[~, (k, v) -> false])
+    @test isempty(wrap(Pair{String, Any}[])[~, (k, v) -> true])
+    containers = collect(x[~, (k, v) -> v isa StringPairs])
+    @test length(containers) == 3
+    @test containers[1] === x.b
+
     # missing key throws KeyError
     @test_throws KeyError x["missing"]
 end
