@@ -22,6 +22,18 @@ are defined for by default.
 """
 struct DefaultStyle <: StructStyle end
 
+"""
+    StructUtils.traitdelegate(style::StructStyle) -> StructStyle
+
+Return the style that default structural trait methods should consult.
+
+Style wrappers can overload this to delegate `dictlike`, `arraylike`,
+`fixedsizearray`, `structlike`, `nulllike`, `noarg`, and `kwarg` queries to
+their wrapped style. Target-specific methods still take precedence through
+normal dispatch.
+"""
+traitdelegate(style::StructStyle) = style
+
 include("macros.jl")
 
 """
@@ -37,7 +49,10 @@ key-value pair in `source`.
 function dictlike end
 
 dictlike(st::StructStyle, x) = dictlike(st, typeof(x))
-dictlike(::StructStyle, T::Type) = dictlike(T)
+function dictlike(style::StructStyle, T::Type)
+    delegate = traitdelegate(style)
+    return delegate === style ? dictlike(T) : dictlike(delegate, T)
+end
 dictlike(::Type{<:AbstractDict}) = true
 dictlike(::Type{<:AbstractVector{<:Pair}}) = true
 dictlike(@nospecialize(T)) = false
@@ -55,7 +70,10 @@ explicitly overloaded.
 function noarg end
 
 noarg(st::StructStyle, x) = noarg(st, typeof(x))
-noarg(::StructStyle, T::Type) = noarg(T)
+function noarg(style::StructStyle, T::Type)
+    delegate = traitdelegate(style)
+    return delegate === style ? noarg(T) : noarg(delegate, T)
+end
 noarg(@nospecialize(T)) = false
 
 """
@@ -74,7 +92,10 @@ be a drop-in replacement for it.
 function kwarg end
 
 kwarg(st::StructStyle, x) = kwarg(st, typeof(x))
-kwarg(::StructStyle, T::Type) = kwarg(T)
+function kwarg(style::StructStyle, T::Type)
+    delegate = traitdelegate(style)
+    return delegate === style ? kwarg(T) : kwarg(delegate, T)
+end
 kwarg(@nospecialize(T)) = false
 
 """
@@ -253,7 +274,10 @@ to the array-like object.
 function arraylike end
 
 arraylike(st::StructStyle, x) = arraylike(st, typeof(x))
-arraylike(::StructStyle, T::Type) = arraylike(T)
+function arraylike(style::StructStyle, T::Type)
+    delegate = traitdelegate(style)
+    return delegate === style ? arraylike(T) : arraylike(delegate, T)
+end
 arraylike(::Type{<:AbstractArray{T,0}}) where {T} = false
 arraylike(::Type{<:AbstractArray}) = true
 arraylike(::Type{<:AbstractSet}) = true
@@ -280,7 +304,10 @@ function fixedsizearray end
 fixedsizearray(::Type) = false
 fixedsizearray(::Type{<:AbstractArray{T,N}}) where {T,N} = N > 1
 fixedsizearray(::Type{<:AbstractSet}) = false
-fixedsizearray(st::StructStyle, ::Type{T}) where {T} = fixedsizearray(T)
+function fixedsizearray(style::StructStyle, ::Type{T}) where {T}
+    delegate = traitdelegate(style)
+    return delegate === style ? fixedsizearray(T) : fixedsizearray(delegate, T)
+end
 
 """
     StructUtils.structlike(x) -> Bool
@@ -301,7 +328,10 @@ where fields should be considered private to the `make` process and should inste
 function structlike end
 
 structlike(st::StructStyle, x) = structlike(st, typeof(x))
-structlike(::StructStyle, T::Type) = structlike(T)
+function structlike(style::StructStyle, T::Type)
+    delegate = traitdelegate(style)
+    return delegate === style ? structlike(T) : structlike(delegate, T)
+end
 structlike(::Type{<:Function}) = false
 structlike(::Type{<:Module}) = false
 structlike(::Type{<:AbstractArray{T,0}}) where {T} = false
@@ -334,7 +364,10 @@ mainly used in the `make!` implementation to determine if a
 function nulllike end
 
 nulllike(st::StructStyle, x) = nulllike(st, typeof(x))
-nulllike(::StructStyle, T::Type) = nulllike(T)
+function nulllike(style::StructStyle, T::Type)
+    delegate = traitdelegate(style)
+    return delegate === style ? nulllike(T) : nulllike(delegate, T)
+end
 nulllike(@nospecialize(T)) = T === Missing || T === Nothing
 
 """

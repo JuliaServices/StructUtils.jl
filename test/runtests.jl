@@ -41,6 +41,30 @@ function StructUtils.fieldtags(st::PerFieldTagStyle, ::Type{PerFieldTagged}, fie
     return (;)
 end
 
+struct TraitInnerStyle <: StructUtils.StructStyle end
+struct TraitWrapperStyle{S<:StructUtils.StructStyle} <: StructUtils.StructStyle
+    style::S
+end
+StructUtils.traitdelegate(style::TraitWrapperStyle) = style.style
+
+struct InnerDictlike end
+struct InnerArraylike end
+struct InnerFixedSizeArray end
+struct InnerStructlike end
+struct InnerNulllike end
+struct InnerNoarg end
+struct InnerKwarg end
+struct BroadDictlike end
+
+StructUtils.dictlike(::TraitInnerStyle, ::Type{InnerDictlike}) = true
+StructUtils.arraylike(::TraitInnerStyle, ::Type{InnerArraylike}) = true
+StructUtils.fixedsizearray(::TraitInnerStyle, ::Type{InnerFixedSizeArray}) = true
+StructUtils.structlike(::TraitInnerStyle, ::Type{InnerStructlike}) = false
+StructUtils.nulllike(::TraitInnerStyle, ::Type{InnerNulllike}) = true
+StructUtils.noarg(::TraitInnerStyle, ::Type{InnerNoarg}) = true
+StructUtils.kwarg(::TraitInnerStyle, ::Type{InnerKwarg}) = true
+StructUtils.dictlike(::StructUtils.StructStyle, ::Type{BroadDictlike}) = true
+
 include(joinpath(dirname(pathof(StructUtils)), "../test/macros.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/struct.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/selectors.jl"))
@@ -189,6 +213,20 @@ println("Tuple")
     StructUtils.make!(pmut2, (id=0, name="Jane"); style=StrictUnknownFieldStyle())
     @test pmut2.id == 0 && pmut2.name == "Jane"
     @test_throws UnknownFieldTestError StructUtils.make!(pmut2, (id=0, name="Joan", rate=3.14); style=StrictUnknownFieldStyle())
+end
+
+@testset "structural trait delegation" begin
+    style = TraitWrapperStyle(TraitInnerStyle())
+    @test StructUtils.traitdelegate(style) === style.style
+    @test StructUtils.dictlike(style, InnerDictlike)
+    @test StructUtils.arraylike(style, InnerArraylike)
+    @test StructUtils.fixedsizearray(style, InnerFixedSizeArray)
+    @test !StructUtils.structlike(style, InnerStructlike)
+    @test StructUtils.nulllike(style, InnerNulllike)
+    @test StructUtils.noarg(style, InnerNoarg)
+    @test StructUtils.kwarg(style, InnerKwarg)
+    @test StructUtils.dictlike(style, BroadDictlike)
+    @test StructUtils.traitdelegate(TraitInnerStyle()) === TraitInnerStyle()
 end
 
 @testset "target fieldtags are cached during make" begin
