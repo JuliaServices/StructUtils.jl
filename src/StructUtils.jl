@@ -25,6 +25,27 @@ struct DefaultStyle <: StructStyle end
 include("macros.jl")
 
 """
+    StructUtils.parentstyle(style::StructStyle) -> Union{StructStyle, Nothing}
+
+Return the style that `style` wraps, or `nothing` (the default).
+
+A type-classification trait (`dictlike`, `arraylike`, `structlike`, `nulllike`,
+`noarg`, `kwarg`, `fixedsizearray`) that has no method for `style` is answered by
+`parentstyle(style)`. A package that wraps a caller's style in its own style type
+should overload `parentstyle` rather than forward each trait: a forwarding method
+like `dictlike(::Wrapper, ::Type{T}) where {T}` is ambiguous with methods like
+`dictlike(::StructStyle, ::Type{MyType})`, including those `@noarg` and
+`@nonstruct` define.
+"""
+parentstyle(::StructStyle) = nothing
+
+# the answer of a trait `f` for a style that has no method of its own
+@inline function _parenttrait(f::F, st::StructStyle, T::Type) where {F}
+    p = parentstyle(st)
+    return p === nothing ? f(T) : f(p, T)
+end
+
+"""
     StructUtils.dictlike(x) -> Bool
     StructUtils.dictlike(::StructStyle, x) -> Bool
     StructUtils.dictlike(::StructStyle, ::Type{T}) -> Bool
@@ -32,12 +53,13 @@ include("macros.jl")
 Returns `true` if `x` or type `T` is dictionary-like, `false` otherwise.
 When `StructUtils.make(T, source)` is called, if `dictlike(T)` is `true`,
 an instance will be `initialize`d, and then `addkeyval!`ed for each
-key-value pair in `source`.
+key-value pair in `source`. Keys and values are made as the instance's
+`keytype` and `valtype`, so a non-`AbstractDict` type must define both.
 """
 function dictlike end
 
 dictlike(st::StructStyle, x) = dictlike(st, typeof(x))
-dictlike(::StructStyle, T::Type) = dictlike(T)
+dictlike(st::StructStyle, T::Type) = _parenttrait(dictlike, st, T)
 dictlike(::Type{<:AbstractDict}) = true
 dictlike(::Type{<:AbstractVector{<:Pair}}) = true
 dictlike(@nospecialize(T)) = false
@@ -55,7 +77,7 @@ explicitly overloaded.
 function noarg end
 
 noarg(st::StructStyle, x) = noarg(st, typeof(x))
-noarg(::StructStyle, T::Type) = noarg(T)
+noarg(st::StructStyle, T::Type) = _parenttrait(noarg, st, T)
 noarg(@nospecialize(T)) = false
 
 """
@@ -74,7 +96,7 @@ be a drop-in replacement for it.
 function kwarg end
 
 kwarg(st::StructStyle, x) = kwarg(st, typeof(x))
-kwarg(::StructStyle, T::Type) = kwarg(T)
+kwarg(st::StructStyle, T::Type) = _parenttrait(kwarg, st, T)
 kwarg(@nospecialize(T)) = false
 
 """
@@ -254,7 +276,7 @@ to the array-like object.
 function arraylike end
 
 arraylike(st::StructStyle, x) = arraylike(st, typeof(x))
-arraylike(::StructStyle, T::Type) = arraylike(T)
+arraylike(st::StructStyle, T::Type) = _parenttrait(arraylike, st, T)
 arraylike(::Type{<:AbstractArray{T,0}}) where {T} = false
 arraylike(::Type{<:AbstractArray}) = true
 arraylike(::Type{<:AbstractSet}) = true
@@ -281,7 +303,7 @@ function fixedsizearray end
 fixedsizearray(::Type) = false
 fixedsizearray(::Type{<:AbstractArray{T,N}}) where {T,N} = N > 1
 fixedsizearray(::Type{<:AbstractSet}) = false
-fixedsizearray(st::StructStyle, ::Type{T}) where {T} = fixedsizearray(T)
+fixedsizearray(st::StructStyle, T::Type) = _parenttrait(fixedsizearray, st, T)
 
 """
     StructUtils.structlike(x) -> Bool
@@ -302,7 +324,7 @@ where fields should be considered private to the `make` process and should inste
 function structlike end
 
 structlike(st::StructStyle, x) = structlike(st, typeof(x))
-structlike(::StructStyle, T::Type) = structlike(T)
+structlike(st::StructStyle, T::Type) = _parenttrait(structlike, st, T)
 structlike(::Type{<:Function}) = false
 structlike(::Type{<:Module}) = false
 structlike(::Type{<:AbstractArray{T,0}}) where {T} = false
@@ -340,7 +362,7 @@ mainly used in the `make!` implementation to determine if a
 function nulllike end
 
 nulllike(st::StructStyle, x) = nulllike(st, typeof(x))
-nulllike(::StructStyle, T::Type) = nulllike(T)
+nulllike(st::StructStyle, T::Type) = _parenttrait(nulllike, st, T)
 nulllike(@nospecialize(T)) = T === Missing || T === Nothing
 
 """
