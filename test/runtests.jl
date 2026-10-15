@@ -755,4 +755,7 @@ end
 end
 
 include(joinpath(dirname(pathof(StructUtils)), "../test/lazily_initialized_fields.jl"))
+include(joinpath(dirname(pathof(StructUtils)), "../test/dataframes.jl"))
+include(joinpath(dirname(pathof(StructUtils)), "../test/measurements.jl"))
+include(joinpath(dirname(pathof(StructUtils)), "../test/tables.jl"))
 include("trim_compile_tests.jl")
