@@ -1,7 +1,7 @@
 # StructUtils
 
 [![CI](https://github.com/JuliaServices/StructUtils.jl/workflows/CI/badge.svg)](https://github.com/JuliaServices/StructUtils.jl/actions?query=workflow%3ACI)
-[![codecov](https://codecov.io/gh/JuliaServices/StructUtils.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/JuliaServices/StructUtils.jl)
+[![codecov](https://codecov.io/gh/JuliaServices/StructUtils.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/JuliaServices/StructUtils.jl)
 [![deps](https://juliahub.com/docs/StructUtils/deps.svg)](https://juliahub.com/ui/Packages/StructUtils/HHBkp?t=2)
 [![version](https://juliahub.com/docs/StructUtils/version.svg)](https://juliahub.com/ui/Packages/StructUtils/HHBkp)
 [![pkgeval](https://juliahub.com/docs/StructUtils/pkgeval.svg)](https://juliahub.com/ui/Packages/StructUtils/HHBkp)
