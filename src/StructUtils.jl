@@ -275,11 +275,6 @@ implementation returns `true` for multidimensional `<:AbstractArray` types
 
 Override this for custom array types that have a fixed, known size but
 are not growable (e.g. `StaticArrays.StaticArray`).
-
-Multidimensional construction rejects input that exceeds the discovered shape or
-leaves an element uninitialized. It tracks filled elements in a one-bit-per-element
-map and scans that map once after traversing the source. In-place `make!` updates
-can still supply only part of an existing array.
 """
 function fixedsizearray end
 
@@ -985,7 +980,8 @@ struct MultiDimClosure{S,A}
     arr::A
     dims::Vector{Int}
     cur_dim::Base.RefValue{Int}
-    # Indexed sources can arrive out of order or overwrite an earlier element.
+    # elements set so far, by linear index; `nothing` when updating an existing array,
+    # which may be updated only in part
     filled::Union{Nothing,BitVector}
 end
 
@@ -1036,6 +1032,10 @@ the automatic "all argument" constructor that structs have defined by default (e
 
 `make` calls `applyeach` on the `source` object, where the key-value pairs
 from `source` will be used in constructing `T`.
+
+For a multidimensional array type `T`, the shape comes from the first element at each
+nesting level of `source`; if any other nested array is longer or shorter, `make`
+throws a `DimensionMismatch`.
 
 Before structural construction, `make` calls [`StructUtils.lower`](@ref) on a
 root source for which [`StructUtils.structlike`](@ref) is `false`. Struct-like
