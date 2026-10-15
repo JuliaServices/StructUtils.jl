@@ -92,9 +92,9 @@ end
 StructUtils.lift(::Type{Email}, x::String) = Email(x)
 StructUtils.lower(x::Email) = x.value
 
-# Now Email will be serialized as a string, not an object
-user = User(email=Email("alice@example.com"))
-dict = StructUtils.make(Dict{String,Any}, user)  # email field is a string
+# Now an Email is converted as a string, not an object
+StructUtils.make(Dict{String,Any}, (; email=Email("alice@example.com")))
+# Dict("email" => "alice@example.com")
 ```
 
 **Note**: `@nonstruct` does not support field defaults, tags, or other StructUtils macros since you're explicitly opting out of struct-like behavior.
@@ -209,7 +209,7 @@ user = StructUtils.make(User, Dict("id" => 1, "name" => "Alice"))
 dict = StructUtils.make(Dict{String,Any}, user)
 
 # Convert a struct to a NamedTuple
-nt = StructUtils.make(NamedTuple, user)
+nt = StructUtils.make(@NamedTuple{id::Int, name::String}, user)
 
 # Convert a JSON object to a struct (with JSON.jl)
 user = JSON.parse(json_string, User)  # Uses StructUtils.make under the hood
@@ -327,7 +327,7 @@ StructUtils.arraylike(::Type{MyArray}) = true
 StructUtils.noarg(::Type{MyType}) = true
 
 # For types with keyword constructors
-StructUtils.kwdef(::Type{MyType}) = true
+StructUtils.kwarg(::Type{MyType}) = true
 ```
 
 ### Value Conversion
@@ -407,7 +407,7 @@ The selector syntax supports various operations:
 
 ### Non-Struct-Like Structs with `@nonstruct`
 
-What if you have a custom struct that you want behave more like a primitive type rather than a struct?
+What if you have a custom struct that you want to behave more like a primitive type rather than a struct?
 
 The `@nonstruct` macro is perfect for this use case. By marking your struct as non-struct-like, you tell StructUtils to treat it as a primitive type that should be converted directly using `lift` and `lower` methods rather than constructing it from field values.
 
@@ -433,7 +433,7 @@ StructUtils.lift(::Type{Email}, x::String) = Email(x)
 StructUtils.lower(x::Email) = x.value
 
 # Now you can use Email in your structs and it will be serialized as a string
-@defaults struct User
+@kwarg struct User
     id::Int = 1
     name::String = "default"
     email::Email
@@ -472,7 +472,7 @@ StructUtils.lift(::Type{Percent}, x::String) = Percent(parse(Float64, x))
 StructUtils.lower(x::Percent) = x.value
 
 # Use in a struct
-@defaults struct Product
+@kwarg struct Product
     name::String = "default"
     discount::Percent = Percent(0.0)
 end
@@ -531,7 +531,7 @@ StructUtils.liftkey(::Type{Percent}, x::String) = Percent(parse(Float64, x))
     name::String = "Jim"
     address::Union{Nothing, String} = nothing
     rate::Union{Missing, Float64} = missing
-    type::Symbol = :a &(json=(name="franken_type",),)
+    type::Symbol = :a &(name="franken_type",)
     notsure::Any = nothing
     monster::AbstractMonster = Dracula(0)
     percent::Percent = Percent(0.0)
