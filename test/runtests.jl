@@ -50,6 +50,31 @@ function StructUtils.fieldtags(st::PerFieldTagStyle, ::Type{PerFieldTagged}, fie
     return (;)
 end
 
+# a style that wraps another, as JSON.jl wraps a caller's style
+struct WrapStyle{S<:StructUtils.StructStyle} <: StructUtils.StructStyle
+    parent::S
+end
+StructUtils.parentstyle(st::WrapStyle) = st.parent
+struct WrappedStyle <: StructUtils.StructStyle end
+
+struct DictForWrapped
+    vals::Dict{String,Int}
+end
+DictForWrapped() = DictForWrapped(Dict{String,Int}())
+Base.keytype(::DictForWrapped) = String
+Base.valtype(::DictForWrapped) = Int
+StructUtils.addkeyval!(d::DictForWrapped, k, v) = (d.vals[k] = v)
+StructUtils.dictlike(::WrappedStyle, ::Type{DictForWrapped}) = true
+
+struct DictForAnyStyle
+    vals::Dict{String,Int}
+end
+DictForAnyStyle() = DictForAnyStyle(Dict{String,Int}())
+Base.keytype(::DictForAnyStyle) = String
+Base.valtype(::DictForAnyStyle) = Int
+StructUtils.addkeyval!(d::DictForAnyStyle, k, v) = (d.vals[k] = v)
+StructUtils.dictlike(::StructUtils.StructStyle, ::Type{DictForAnyStyle}) = true
+
 include(joinpath(dirname(pathof(StructUtils)), "../test/macros.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/struct.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/selectors.jl"))
@@ -420,6 +445,18 @@ end
     @test !StructUtils.structlike(StructUtils.DefaultStyle(), NonStructComplex)
 end
 
+@testset "parentstyle answers traits for a wrapping style" begin
+    wrapped = WrapStyle(WrappedStyle())
+    @test StructUtils.dictlike(wrapped, DictForWrapped)
+    @test StructUtils.dictlike(WrapStyle(wrapped), DictForWrapped)
+    @test !StructUtils.dictlike(WrapStyle(StructUtils.DefaultStyle()), DictForWrapped)
+    @test StructUtils.make(wrapped, DictForWrapped, Dict("a" => 1))[1].vals == Dict("a" => 1)
+    # methods for any style apply to the wrapper directly, without ambiguity
+    @test StructUtils.make(wrapped, DictForAnyStyle, Dict("a" => 1))[1].vals == Dict("a" => 1)
+    @test !StructUtils.structlike(wrapped, NonStructUnit)
+    @test StructUtils.arraylike(wrapped, Vector{Int}) && StructUtils.nulllike(wrapped, Nothing)
+end
+
 @testset "@nonstruct representation in make: #29" begin
     mapping = Dict{String,Any}("leaf" => 1)
     value = NonStructMapping(mapping)
@@ -756,4 +793,7 @@ end
 end
 
 include(joinpath(dirname(pathof(StructUtils)), "../test/lazily_initialized_fields.jl"))
+include(joinpath(dirname(pathof(StructUtils)), "../test/dataframes.jl"))
+include(joinpath(dirname(pathof(StructUtils)), "../test/measurements.jl"))
+include(joinpath(dirname(pathof(StructUtils)), "../test/tables.jl"))
 include("trim_compile_tests.jl")
