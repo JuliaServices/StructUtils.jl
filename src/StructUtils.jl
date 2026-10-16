@@ -999,17 +999,31 @@ struct MultiDimClosure{S,A}
     arr::A
     dims::Vector{Int}
     cur_dim::Base.RefValue{Int}
+    # elements set so far, by linear index; `nothing` when updating an existing array,
+    # which may be updated only in part
+    filled::Union{Nothing,BitVector}
 end
 
+MultiDimClosure(style, arr, dims, cur_dim) = MultiDimClosure(style, arr, dims, cur_dim, nothing)
+
 function (f::MultiDimClosure{S,A})(i::Int, val) where {S,A}
+    if f.filled !== nothing
+        1 <= i <= size(f.arr, f.cur_dim[]) || throw(DimensionMismatch("input exceeds multidimensional array shape"))
+    end
     f.dims[f.cur_dim[]] = i
     if arraylike(f.style, val) && f.cur_dim[] > 1
         f.cur_dim[] -= 1
         st = applyeach(f.style, f, val)
         f.cur_dim[] += 1
-    else
+    elseif f.filled === nothing
         val, st = make(f.style, eltype(f.arr), val)
         setindex!(f.arr, val, f.dims...)
+    else
+        indices = ntuple(dim -> f.dims[dim], Val(ndims(f.arr)))
+        checkbounds(Bool, f.arr, indices...) || throw(DimensionMismatch("input exceeds multidimensional array shape"))
+        val, st = make(f.style, eltype(f.arr), val)
+        f.arr[indices...] = val
+        f.filled[LinearIndices(f.arr)[indices...]] = true
     end
     return st
 end
@@ -1037,6 +1051,10 @@ the automatic "all argument" constructor that structs have defined by default (e
 
 `make` calls `applyeach` on the `source` object, where the key-value pairs
 from `source` will be used in constructing `T`.
+
+For a multidimensional array type `T`, the shape comes from the first element at each
+nesting level of `source`; if any other nested array is longer or shorter, `make`
+throws a `DimensionMismatch`.
 
 Before structural construction, `make` calls [`StructUtils.lower`](@ref) on a
 root source for which [`StructUtils.structlike`](@ref) is `false`. Struct-like
@@ -1350,7 +1368,9 @@ function makearray(style, ::Type{T}, source) where {T}
         N = length(dims)
         if N > 1
             buf = reshape(data, dims)
-            st = applyeach(style, MultiDimClosure(style, buf, ones(Int, N), Ref(N)), source)
+            filled = falses(L)
+            st = applyeach(style, MultiDimClosure(style, buf, ones(Int, N), Ref(N), filled), source)
+            all(filled) || throw(DimensionMismatch("input does not fill multidimensional array shape"))
         else
             idx = Ref(1)
             st = applyeach(style, FixedArrayClosure(data, style, idx), source)
