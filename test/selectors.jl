@@ -84,3 +84,26 @@ x = wrap(raw)
     # missing key throws KeyError
     @test_throws KeyError x["missing"]
 end
+
+# An array-like source that is not struct-like (like JSON's lazy arrays): recursive selection
+# by key must not return its elements unless they sit under a matching key.
+struct ListOnly
+    items::Vector{Any}
+end
+@selectors ListOnly
+StructUtils.arraylike(::StructUtils.StructStyle, ::Type{ListOnly}) = true
+StructUtils.structlike(::StructUtils.StructStyle, ::Type{ListOnly}) = false
+function StructUtils.applyeach(st::StructUtils.StructStyle, f, x::ListOnly)
+    for (i, v) in enumerate(getfield(x, :items))
+        ret = f(i, v)
+        ret isa StructUtils.EarlyReturn && return ret
+    end
+    return
+end
+
+@testset "recursive selection through array-like values" begin
+    y = StringPairs(["a" => ListOnly(Any[1, 2]), "b" => StringPairs(["k" => 3]), "k" => ListOnly(Any[4])])
+    @test collect(y[~, "k"]) == Any[3, y.k]
+    @test collect(ListOnly(Any[1, StringPairs(["k" => 2]), ListOnly(Any[3])])[~, "k"]) == [2]
+    @test collect(y[~, :]) == [1, 2, 3, 4]
+end

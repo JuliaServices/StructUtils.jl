@@ -150,8 +150,9 @@ function _getindex(x, ::typeof(~), key::Union{KeyInd, Colon}, values, keymatched
             end
         end
     elseif StructUtils.arraylike(StructUtils.DefaultStyle(), x)
+        # an element is a match only if the array is (with `:`, every value is)
         StructUtils.applyeach(x) do _, item
-            _getindex(item, ~, key, values, true)
+            _getindex(item, ~, key, values, keymatched)
         end
     elseif keymatched
         push!(values, x)
