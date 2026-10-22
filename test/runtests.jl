@@ -272,6 +272,15 @@ x = StructUtils.make(H, (id=0, name="", properties=Dict("a" => 1), addresses=["a
 
 println("I")
 @test StructUtils.make(I, (id=2, name="Aubrey", fruit=apple)) == I(2, "Aubrey", apple)
+@test StructUtils.make(I, (id=2, name="Aubrey", fruit="banana")) == I(2, "Aubrey", banana)
+@test StructUtils.lift(Fruit, SubString("xapplex", 2, 6)) == apple
+@test_throws ArgumentError StructUtils.lift(Fruit, "appl")
+@test_throws ArgumentError StructUtils.lift(Fruit, "apples")
+@test_throws ArgumentError StructUtils.lift(Fruit, "apple\0")
+# an unknown name is rejected without creating a Symbol (Symbols are never freed)
+unknown_fruit = "Z" * uppercase(string(rand(UInt128); base=36))
+@test_throws ArgumentError StructUtils.make(I, (id=2, name="Aubrey", fruit=unknown_fruit))
+@test ccall(:jl_symbol_lookup, Ptr{Cvoid}, (Cstring,), unknown_fruit) == C_NULL
 
 println("Vehicle")
 StructUtils.@choosetype Vehicle x -> x["type"] == "car" ? Car : x["type"] == "truck" ? Truck : throw(ArgumentError("Unknown vehicle type: $(x["type"])"))

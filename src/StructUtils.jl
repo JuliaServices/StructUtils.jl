@@ -644,12 +644,25 @@ function _lifttime(s::String)
     return Dates.Time(h, mi, sec, ms, us, ns)
 end
 
-function lift(::Type{T}, x::AbstractString) where {T<:Enum}
-    sym = Symbol(x)
-    for (k, v) in Base.Enums.namemap(T)
-        v === sym && return T(k)
+# Compare a Symbol's name with a string without making a Symbol from the string:
+# Symbols are never freed, so interning parsed input would keep every distinct
+# value in memory for good.
+function symbolnameeq(sym::Symbol, x::AbstractString)
+    codeunit(x) === UInt8 || return symbolnameeq(sym, String(x))
+    p = Base.unsafe_convert(Ptr{UInt8}, sym)
+    n = ncodeunits(x)
+    for i in 1:n
+        b = unsafe_load(p, i)
+        (b == 0x00 || b != codeunit(x, i)) && return false
     end
-    throw(ArgumentError("invalid `$T` string value: \"$sym\""))
+    return unsafe_load(p, n + 1) == 0x00
+end
+
+function lift(::Type{T}, x::AbstractString) where {T<:Enum}
+    for (k, v) in Base.Enums.namemap(T)
+        symbolnameeq(v, x) && return T(k)
+    end
+    throw(ArgumentError("invalid `$T` string value: \"$x\""))
 end
 
 lift(st::StructStyle, ::Type{T}, x) where {T} = lift(T, x), defaultstate(st)
