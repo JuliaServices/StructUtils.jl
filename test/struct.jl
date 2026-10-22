@@ -378,3 +378,7 @@ struct CallableCollector
     values::Vector{Any}
 end
 (c::CallableCollector)(k, v) = (push!(c.values, k => v); nothing)
+
+struct ZeroDimHolder
+    a::Array{Int,0}
+end
