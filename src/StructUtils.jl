@@ -434,7 +434,10 @@ Lifts a value `x` to a type `T`. This function is called by `StructUtils.make`
 to lift unit/atom values to the appropriate type. The default implementation is
 the identity function for most types, but it also includes special cases
 for `Symbol`, `Char`, `UUID`, `VersionNumber`, `MIME`, `Regex`, and `TimeType` types to be
-constructed from strings.
+constructed from strings. For a `Union` target that `x` is not an instance of, `x` is lifted
+into one member: for a number, the first numeric member (an integer type for an integer and a
+float type for a float, when there is one); for a string, `String`, or else the only member
+that is not a number, `Nothing`, or `Missing`.
 Allows transforming a "domain value" that may be some primitive representation
 into a more complex Julia type.
 
