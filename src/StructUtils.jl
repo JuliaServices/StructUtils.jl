@@ -445,7 +445,34 @@ function lift end
 
 lift(::Type{Symbol}, x) = Symbol(x)
 lift(::Type{String}, x::Symbol) = String(x)
-lift(::Type{T}, x) where {T} = Base.issingletontype(T) ? T() : convert(T, x)
+function lift(::Type{T}, x) where {T}
+    # `convert` to a Union only accepts an instance of a member
+    if T isa Union && !(x isa T)
+        M = _scalarmember(T, typeof(x))
+        M === nothing || return lift(M, x)
+    end
+    return Base.issingletontype(T) ? T() : convert(T, x)
+end
+
+# The member of the Union `T` that a scalar of type `X` lifts into: for a number, the
+# first numeric member, preferring an integer type for an integer and a float type for
+# a float; for a string, `String`, or else the only member that is not a number or a
+# null. `nothing` when there is no such member.
+@generated function _scalarmember(::Type{T}, ::Type{X}) where {T,X}
+    members = Base.uniontypes(T)
+    if X <: Number
+        numbers = [M for M in members if M <: Number]
+        kind = X <: Integer ? Integer : X <: AbstractFloat ? AbstractFloat : Number
+        preferred = [M for M in numbers if M <: kind]
+        member = isempty(preferred) ? (isempty(numbers) ? nothing : first(numbers)) : first(preferred)
+    elseif X <: AbstractString
+        others = [M for M in members if !(M <: Number) && M !== Nothing && M !== Missing]
+        member = String in members ? String : length(others) == 1 ? only(others) : nothing
+    else
+        member = nothing
+    end
+    return member === nothing ? :(return nothing) : :(return $member)
+end
 lift(::Type{>:Missing}, ::Nothing) = missing
 lift(::Type{>:Nothing}, ::Nothing) = nothing
 lift(::Type{>:Union{Missing,Nothing}}, ::Nothing) = nothing

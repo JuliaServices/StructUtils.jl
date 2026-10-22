@@ -382,3 +382,20 @@ end
 struct ZeroDimHolder
     a::Array{Int,0}
 end
+
+@enum UnionColor union_red union_green
+struct NumberOrString
+    x::Union{Float64,String}
+end
+struct MaybeNumberOrString
+    x::Union{Nothing,Float64,String}
+end
+struct IntOrSymbol
+    x::Union{Int,Symbol}
+end
+struct NarrowNumbers
+    x::Union{Int32,Float32,String}
+end
+struct IntOrColor
+    x::Union{Int,UnionColor,Date}
+end

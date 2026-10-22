@@ -621,6 +621,22 @@ end
     @test StructUtils.make(ZeroDimHolder, (a=2,)).a[] == 2
 end
 
+@testset "Union{scalar, scalar} picks the member a scalar lifts into" begin
+    @test StructUtils.make(NumberOrString, (x=1,)).x === 1.0
+    @test StructUtils.make(NumberOrString, (x=1.5,)).x === 1.5
+    @test StructUtils.make(NumberOrString, (x="a",)).x == "a"
+    @test StructUtils.make(MaybeNumberOrString, (x=2,)).x === 2.0
+    @test StructUtils.make(MaybeNumberOrString, (x=nothing,)).x === nothing
+    @test StructUtils.make(IntOrSymbol, (x="a",)).x === :a
+    @test StructUtils.make(IntOrSymbol, (x=1.0,)).x === 1
+    @test_throws InexactError StructUtils.make(IntOrSymbol, (x=1.5,))
+    @test StructUtils.make(NarrowNumbers, (x=1,)).x === Int32(1)
+    @test StructUtils.make(NarrowNumbers, (x=1.5,)).x === 1.5f0
+    # two members other than numbers: a string matches neither
+    @test_throws MethodError StructUtils.make(IntOrColor, (x="union_green",))
+    @test StructUtils.make(IntOrColor, (x=3,)).x === 3
+end
+
 @testset "Number subtypes are atoms" begin
     # A Number is represented by its value, not its field layout. The rule has to reach
     # subtypes: before this, only the exact type `Number` matched, so every user-defined
