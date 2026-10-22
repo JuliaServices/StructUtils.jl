@@ -627,7 +627,7 @@ lift(st::StructStyle, ::Type{T}, x) where {T} = lift(T, x), defaultstate(st)
 # bit of an odd case, but support 0-dimensional array lifting from scalar value
 function lift(st::StructStyle, ::Type{A}, x) where {A<:AbstractArray{T,0}} where {T}
     m = A(undef)
-    m[1] = lift(st, T, x)
+    m[1], _ = lift(st, T, x)
     return m, defaultstate(st)
 end
 

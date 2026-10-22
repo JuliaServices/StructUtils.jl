@@ -615,6 +615,12 @@ end
     @test StructUtils.structlike(StructUtils.DefaultStyle(), BigFloat) == false
 end
 
+@testset "0-dimensional arrays lift from a scalar" begin
+    @test StructUtils.make(Array{Int,0}, 1)[] == 1
+    @test StructUtils.make(Array{Float64,0}, 1)[] === 1.0
+    @test StructUtils.make(ZeroDimHolder, (a=2,)).a[] == 2
+end
+
 @testset "Number subtypes are atoms" begin
     # A Number is represented by its value, not its field layout. The rule has to reach
     # subtypes: before this, only the exact type `Number` matched, so every user-defined
