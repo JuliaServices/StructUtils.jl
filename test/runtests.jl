@@ -388,6 +388,12 @@ end
     @test StructUtils.make(NamedTuple{(:a,), Tuple{Int}}, :a => 42) == (a=42,)
 end
 
+@testset "multidimensional make from an empty array" begin
+    @test size(StructUtils.make(Matrix{Int}, Any[])) == (0, 0)
+    @test size(StructUtils.make(Array{Float64,3}, Any[])) == (0, 0, 0)
+    @test size(StructUtils.make(Matrix{Int}, Any[Any[]])) == (0, 1)
+end
+
 @testset "multidimensional make" begin
     # 2D Int matrix from nested vectors
     x2 = StructUtils.make(Matrix{Int}, [[1, 3], [2, 4]])

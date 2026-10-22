@@ -990,11 +990,11 @@ function discover_dims(style, x, ndims::Int)
         return (len,)
     end
 
-    ret = (
-        applyeach(x) do _, v
-            return arraylike(style, v) ? EarlyReturn(discover_dims(style, v, ndims - 1)) : EarlyReturn(())
-        end
-    )::EarlyReturn
+    ret = applyeach(x) do _, v
+        return arraylike(style, v) ? EarlyReturn(discover_dims(style, v, ndims - 1)) : EarlyReturn(())
+    end
+    # an empty array has no element to measure, so its inner dimensions are empty too
+    ret isa EarlyReturn || return (ntuple(_ -> 0, ndims - 1)..., len)
     return (ret.value..., len)
 end
 
