@@ -1211,7 +1211,8 @@ function _make(style::StructStyle, ::Val{T}, source, tags) where {T}
             selected === nothing || return make(style, selected, source, tags)
         end
     end
-    if T <: Tuple || dictlike(style, T) || arraylike(style, T) || noarg(style, T) || structlike(style, T)
+    # a `lift` tag decides the value for any field type, structural ones included
+    if !haskey(tags, :lift) && (T <: Tuple || dictlike(style, T) || arraylike(style, T) || noarg(style, T) || structlike(style, T))
         return make(style, T, source)
     else
         return lift(style, T, source, tags)
