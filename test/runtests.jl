@@ -833,3 +833,18 @@ include(joinpath(dirname(pathof(StructUtils)), "../test/dataframes.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/measurements.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/tables.jl"))
 include("trim_compile_tests.jl")
+
+@tags struct LiftedStructural
+    v::Vector{Int} &(lift=x -> [sum(x)],)
+    d::Dict{String,Int} &(lift=x -> Dict("n" => length(x)),)
+    t::Tuple{Int,Int} &(lift=x -> (x[2], x[1]),)
+    n::Int
+end
+
+@testset "lift tags apply to structural field types" begin
+    x = StructUtils.make(LiftedStructural, (v=[1, 2, 3], d=Dict("a" => 1, "b" => 2), t=(1, 2), n=4))
+    @test x.v == [6]
+    @test x.d == Dict("n" => 2)
+    @test x.t == (2, 1)
+    @test x.n == 4
+end
