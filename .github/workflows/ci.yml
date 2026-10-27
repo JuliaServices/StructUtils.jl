@@ -8,6 +8,10 @@ jobs:
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      actions: write
+      contents: read
+      id-token: write
     continue-on-error: ${{ matrix.version == 'pre' || matrix.version == 'nightly' }}
     # Per job, not per workflow, so a newer push cancels superseded tests but never a docs deploy.
     concurrency:
@@ -45,12 +49,15 @@ jobs:
       - uses: codecov/codecov-action@v7
         with:
           files: lcov.info
-          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
   docs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-docdeploy@latest
         env:
