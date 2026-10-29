@@ -1,19 +1,25 @@
 using StructUtils, DBInterface, Tables, Test
 
-# Database rows are `Tables.AbstractRow`s that are only valid until the cursor advances.
-struct DBTestRow <: Tables.AbstractRow
-    values::NamedTuple
-end
-Tables.columnnames(r::DBTestRow) = keys(getfield(r, :values))
-Tables.getcolumn(r::DBTestRow, nm::Symbol) = getfield(r, :values)[nm]
-Tables.getcolumn(r::DBTestRow, i::Int) = getfield(r, :values)[i]
-
-# A row cursor that, like a database result stream, can be iterated only once.
+# A row cursor that, like a database result stream, can be iterated only once, and
+# whose rows (like SQLite.jl's) can only be read until the cursor advances.
 mutable struct OnePassCursor <: DBInterface.Cursor
     rows::Vector{NamedTuple}
     started::Bool
+    pos::Int
 end
-OnePassCursor(rows) = OnePassCursor(rows, false)
+OnePassCursor(rows) = OnePassCursor(rows, false, 0)
+struct DBTestRow <: Tables.AbstractRow
+    cursor::OnePassCursor
+    i::Int
+end
+function values_now(r::DBTestRow)
+    c = getfield(r, :cursor)
+    c.pos == getfield(r, :i) || error("row read after the cursor advanced")
+    return c.rows[c.pos]
+end
+Tables.columnnames(r::DBTestRow) = keys(values_now(r))
+Tables.getcolumn(r::DBTestRow, nm::Symbol) = values_now(r)[nm]
+Tables.getcolumn(r::DBTestRow, i::Int) = values_now(r)[i]
 Tables.isrowtable(::Type{OnePassCursor}) = true
 Base.IteratorSize(::Type{OnePassCursor}) = Base.SizeUnknown()
 function Base.iterate(c::OnePassCursor, i=1)
@@ -21,7 +27,9 @@ function Base.iterate(c::OnePassCursor, i=1)
         c.started && error("cursor already iterated")
         c.started = true
     end
-    return i > length(c.rows) ? nothing : (DBTestRow(c.rows[i]), i + 1)
+    i > length(c.rows) && return nothing
+    c.pos = i
+    return DBTestRow(c, i), i + 1
 end
 
 # A cursor with only column access, like ODBC.jl's default cursor.
@@ -46,6 +54,8 @@ end
 
 @testset "DBInterface extension" begin
     rows = NamedTuple[(id=1, name="a"), (id=2, name="b")]
+    # the test cursor rejects reading a row after advancing, as SQLite.jl's does
+    @test_throws ErrorException Tables.getcolumn(first(collect(OnePassCursor(rows))), :id)
     @test StructUtils.arraylike(OnePassCursor(rows))
     @test StructUtils.make(Vector{DBTestUser}, OnePassCursor(rows)) == [DBTestUser(1, "a"), DBTestUser(2, "b")]
     @test StructUtils.make(Vector{Dict{String,Any}}, OnePassCursor(rows)) ==
