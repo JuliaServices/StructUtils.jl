@@ -832,6 +832,7 @@ include(joinpath(dirname(pathof(StructUtils)), "../test/lazily_initialized_field
 include(joinpath(dirname(pathof(StructUtils)), "../test/dataframes.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/measurements.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/tables.jl"))
+include(joinpath(dirname(pathof(StructUtils)), "../test/dbinterface.jl"))
 include("trim_compile_tests.jl")
 
 @tags struct LiftedStructural
