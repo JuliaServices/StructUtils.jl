@@ -81,6 +81,7 @@ include(joinpath(dirname(pathof(StructUtils)), "../test/selectors.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/construction.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/ignore_inbound.jl"))
 include(joinpath(dirname(pathof(StructUtils)), "../test/iso_lift.jl"))
+include(joinpath(dirname(pathof(StructUtils)), "../test/nested_inference.jl"))
 
 @testset "StructUtils" begin
 
