@@ -1558,20 +1558,69 @@ end
     return ex
 end
 
+# A struct's field values and its sink reach `make` and `applyeach` through the
+# method for the struct's height: the levels of struct nesting below it, capped at
+# `_MAXHEIGHT`. A nested struct has a smaller height than every struct that holds
+# it, so inference never meets the same caller and callee methods twice in one
+# stack. If it did, it would take the nested field types for unbounded recursion,
+# widen them, and cache no frame between the two levels, so each enclosing level
+# would infer everything below it again, once per call path.
+const _MAXHEIGHT = 32
+
+function _structheight(@nospecialize(T), path::Vector{Any}, memo::IdDict{Any,Int})
+    T isa Type || return 0
+    h = get(memo, T, -1)
+    h >= 0 && return h
+    for p in path
+        p === T && return _MAXHEIGHT # a type that holds itself
+    end
+    push!(path, T)
+    h = 0
+    if T isa Union
+        h = max(_structheight(T.a, path, memo), _structheight(T.b, path, memo))
+    elseif T isa DataType
+        for p in T.parameters
+            h = max(h, _structheight(p, path, memo))
+        end
+        if arraylike(T) || dictlike(T)
+            h = max(h, _structheight(eltype(T), path, memo))
+        elseif isconcretetype(T) && structlike(T)
+            for i = 1:fieldcount(T)
+                h = max(h, _structheight(fieldtype(T, i), path, memo))
+            end
+            h += 1
+        end
+    end
+    pop!(path)
+    h = min(h, _MAXHEIGHT)
+    memo[T] = h
+    return h
+end
+
+_structheight(@nospecialize(T)) = _structheight(T, Any[], IdDict{Any,Int}())
+
+@generated _heightval(::Type{T}) where {T} = Val(_structheight(T))
+
+for h = 0:_MAXHEIGHT
+    @eval @inline _fieldcall(::Val{$h}, style, ::Type{T}, v, tags) where {T} = make(style, T, v, tags)
+    @eval @inline _sinkcall(::Val{$h}, style, sink, source) = applyeach(style, sink, source)
+end
+
 # Splice each field type as a literal. Normal `make` dispatch remains visible,
 # including exact custom methods; its default path uses the concrete Val token
 # above for Union targets.
-function _fieldmake(j::Int, @nospecialize(ft))
-    return :(make(f.style, $ft, v, sinktag(f.metadata, $j)))
+function _fieldmake(j::Int, @nospecialize(ft), height::Int)
+    return :(_fieldcall($(Val(height)), f.style, $ft, v, sinktag(f.metadata, $j)))
 end
 
 @generated function applyfield!(f::FieldSink{T}, i::Int, v) where {T}
     ex = Expr(:block)
+    height = _structheight(T)
     for j = 1:fieldcount(T)
         push!(ex.args, quote
             if i == $j
                 ignoredfield(sinktag(f.metadata, $j)) && return defaultstate(f.style)
-                val, st = $(_fieldmake(j, fieldtype(T, j)))
+                val, st = $(_fieldmake(j, fieldtype(T, j), height))
                 setval!(f.vals, val, $j)
                 return st
             end
@@ -1601,7 +1650,7 @@ function fillfields!(style::StructStyle, ::Type{T}, vals, source) where {T}
     tags = _fieldtagtuple(style, T, fieldnamesymbols(T))
     metadata = fieldmetadata(tags)
     cursor = fieldcursor(style, metadata)
-    return applyeach(style, FieldSink{T}(vals, style, metadata, cursor), source)
+    return _sinkcall(_heightval(T), style, FieldSink{T}(vals, style, metadata, cursor), source)
 end
 
 makenoarg(style, ::Type{T}, source) where {T} = makenoarg(style, initialize(style, T, source), source)
