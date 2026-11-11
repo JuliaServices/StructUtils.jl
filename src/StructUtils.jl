@@ -1571,8 +1571,10 @@ function _structheight(@nospecialize(T), path::Vector{Any}, memo::IdDict{Any,Int
     T isa Type || return 0
     h = get(memo, T, -1)
     h >= 0 && return h
+    # a type that holds itself, or whose field types keep growing
+    length(path) >= 4 * _MAXHEIGHT && return _MAXHEIGHT
     for p in path
-        p === T && return _MAXHEIGHT # a type that holds itself
+        p === T && return _MAXHEIGHT
     end
     push!(path, T)
     h = 0
