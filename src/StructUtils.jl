@@ -1560,14 +1560,16 @@ end
 
 # On Julia 1.11 and later, a struct's field values and its sink reach `make` and
 # `applyeach` through the method for the struct's height: the levels of struct
-# nesting below it, capped at `_MAXHEIGHT`. A nested struct has a smaller height
-# than every struct that holds it, so inference never meets the same caller and
-# callee methods twice in one stack. If it did, it would take the nested field
-# types for unbounded recursion, widen them, and cache no frame between the two
-# levels, so each enclosing level would infer everything below it again, once per
-# call path. On Julia 1.10, compile time stays linear in the nesting depth without
-# `_fieldcall` and `_sinkcall`, and they would make self-referential types slower
-# to compile, so 1.10 calls `make` and `applyeach` directly.
+# nesting below it, capped at `_MAXHEIGHT`. Below the cap, a nested struct has a
+# smaller height than every struct that holds it, so inference never meets the
+# same caller and callee methods twice in one stack. If it did, it would take the
+# nested field types for unbounded recursion, widen them, and cache no frame
+# between the two levels, so each enclosing level would infer everything below it
+# again, once per call path. Self-referential types, the structs that hold them,
+# and levels deeper than the cap share the top method, so that widening can come
+# back there. On Julia 1.10, compile time stays linear in the nesting depth
+# without `_fieldcall` and `_sinkcall`, and they would make self-referential types
+# slower to compile, so 1.10 calls `make` and `applyeach` directly.
 const _MAXHEIGHT = 32
 
 function _structheight(@nospecialize(T), path::Vector{Any}, memo::IdDict{Any,Int})
