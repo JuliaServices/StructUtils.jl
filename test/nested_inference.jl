@@ -43,9 +43,11 @@ struct Nested4; x::Vector{Nested3}; m::Dict{String,Int}; end
     x = StructUtils.make(Nested4, src)
     @test x.m == Dict("a" => 1) && length(x.x) == 1 && isempty(x.x[1].x)
     # When inference takes a nested field type for unbounded recursion, it widens the call
-    # to `make` (e.g. to `Type{<:Dict}`) and caches no frame between the two nesting levels,
-    # so the first `make` of a deeply nested target takes time exponential in its depth.
-    if VERSION >= v"1.10"
+    # to `make` (e.g. to `Type{<:Dict}`) and caches no frame between the two nesting levels.
+    # On Julia 1.11 and later that makes the first `make` of a nested target take time
+    # exponential in its depth. Julia 1.10 widens these calls too, but its time stays linear,
+    # so StructUtils calls `make` directly there and this test checks only the result.
+    if VERSION >= v"1.11"
         widened = Any[]
         for m in methods(StructUtils.make), mi in Base.specializations(m)
             params = Base.unwrap_unionall(mi.specTypes).parameters

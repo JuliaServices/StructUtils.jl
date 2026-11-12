@@ -1558,13 +1558,16 @@ end
     return ex
 end
 
-# A struct's field values and its sink reach `make` and `applyeach` through the
-# method for the struct's height: the levels of struct nesting below it, capped at
-# `_MAXHEIGHT`. A nested struct has a smaller height than every struct that holds
-# it, so inference never meets the same caller and callee methods twice in one
-# stack. If it did, it would take the nested field types for unbounded recursion,
-# widen them, and cache no frame between the two levels, so each enclosing level
-# would infer everything below it again, once per call path.
+# On Julia 1.11 and later, a struct's field values and its sink reach `make` and
+# `applyeach` through the method for the struct's height: the levels of struct
+# nesting below it, capped at `_MAXHEIGHT`. A nested struct has a smaller height
+# than every struct that holds it, so inference never meets the same caller and
+# callee methods twice in one stack. If it did, it would take the nested field
+# types for unbounded recursion, widen them, and cache no frame between the two
+# levels, so each enclosing level would infer everything below it again, once per
+# call path. On Julia 1.10, compile time stays linear in the nesting depth without
+# `_fieldcall` and `_sinkcall`, and they would make self-referential types slower
+# to compile, so 1.10 calls `make` and `applyeach` directly.
 const _MAXHEIGHT = 32
 
 function _structheight(@nospecialize(T), path::Vector{Any}, memo::IdDict{Any,Int})
@@ -1611,18 +1614,21 @@ end
 # Splice each field type as a literal. Normal `make` dispatch remains visible,
 # including exact custom methods; its default path uses the concrete Val token
 # above for Union targets.
-function _fieldmake(j::Int, @nospecialize(ft), height::Int)
-    return :(_fieldcall($(Val(height)), f.style, $ft, v, sinktag(f.metadata, $j)))
+function _fieldmake(j::Int, @nospecialize(ft))
+    @static if VERSION >= v"1.11"
+        return :(_fieldcall(_heightval(T), f.style, $ft, v, sinktag(f.metadata, $j)))
+    else
+        return :(make(f.style, $ft, v, sinktag(f.metadata, $j)))
+    end
 end
 
 @generated function applyfield!(f::FieldSink{T}, i::Int, v) where {T}
     ex = Expr(:block)
-    height = _structheight(T)
     for j = 1:fieldcount(T)
         push!(ex.args, quote
             if i == $j
                 ignoredfield(sinktag(f.metadata, $j)) && return defaultstate(f.style)
-                val, st = $(_fieldmake(j, fieldtype(T, j), height))
+                val, st = $(_fieldmake(j, fieldtype(T, j)))
                 setval!(f.vals, val, $j)
                 return st
             end
@@ -1652,7 +1658,11 @@ function fillfields!(style::StructStyle, ::Type{T}, vals, source) where {T}
     tags = _fieldtagtuple(style, T, fieldnamesymbols(T))
     metadata = fieldmetadata(tags)
     cursor = fieldcursor(style, metadata)
-    return _sinkcall(_heightval(T), style, FieldSink{T}(vals, style, metadata, cursor), source)
+    @static if VERSION >= v"1.11"
+        return _sinkcall(_heightval(T), style, FieldSink{T}(vals, style, metadata, cursor), source)
+    else
+        return applyeach(style, FieldSink{T}(vals, style, metadata, cursor), source)
+    end
 end
 
 makenoarg(style, ::Type{T}, source) where {T} = makenoarg(style, initialize(style, T, source), source)
