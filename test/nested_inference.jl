@@ -43,10 +43,10 @@ struct Nested4; x::Vector{Nested3}; m::Dict{String,Int}; end
         "m" => nested_obj("a" => nested_leaf("1")))
     x = StructUtils.make(Nested4, src)
     @test x.m == Dict("a" => 1) && length(x.x) == 1 && isempty(x.x[1].x)
-    # On Julia 1.11 and later, a widened call (a bounded `Type{<:X}` target or an abstract
-    # `FieldSink`) makes the first `make` of a nested target exponential in its depth. On 1.10
-    # StructUtils calls `make` and `applyeach` directly (see `_MAXHEIGHT`) and compile time
-    # stays linear, so there the test checks only the result.
+    # On Julia 1.11 and later, a widened call (a bounded `Type{<:X}` target, or a `FieldSink`
+    # without its struct type) makes the first `make` of a nested target exponential in its
+    # depth. On 1.10 StructUtils calls `make` and `applyeach` directly (see `_MAXHEIGHT`) and
+    # compile time stays linear, so there the test checks only the result.
     if VERSION >= v"1.11"
         makes = sinks = 0
         widened = Any[]
@@ -61,7 +61,11 @@ struct Nested4; x::Vector{Nested3}; m::Dict{String,Int}; end
         for m in methods(StructUtils.applyeach), mi in Base.specializations(m)
             mi.specTypes <: Tuple{Any,Any,StructUtils.FieldSink,NestedSource} || continue
             sinks += 1
-            Base.isdispatchtuple(mi.specTypes) || push!(widened, mi.specTypes)
+            # A sink that keeps its struct type but has an abstract style comes from unrelated
+            # abstract calls into other tests' methods (seen on Julia 1.14), not from this widening.
+            sink = Base.unwrap_unionall(mi.specTypes).parameters[3]
+            (sink isa TypeVar || Base.unwrap_unionall(sink).parameters[1] isa TypeVar) &&
+                push!(widened, mi.specTypes)
         end
         @test makes > 0 && sinks > 0
         @test isempty(widened)
