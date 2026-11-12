@@ -1558,18 +1558,17 @@ end
     return ex
 end
 
-# On Julia 1.11 and later, a struct's field values and its sink reach `make` and
-# `applyeach` through the method for the struct's height: the levels of struct
-# nesting below it, capped at `_MAXHEIGHT`. Below the cap, a nested struct has a
-# smaller height than every struct that holds it, so inference never meets the
-# same caller and callee methods twice in one stack. If it did, it would take the
-# nested field types for unbounded recursion, widen them, and cache no frame
-# between the two levels, so each enclosing level would infer everything below it
-# again, once per call path. Self-referential types, the structs that hold them,
-# and levels deeper than the cap share the top method, so that widening can come
-# back there. On Julia 1.10, compile time stays linear in the nesting depth
-# without `_fieldcall` and `_sinkcall`, and they would make self-referential types
-# slower to compile, so 1.10 calls `make` and `applyeach` directly.
+# On Julia 1.11 and later, a struct's fields and sink reach `make` and `applyeach`
+# through the wrapper method for its height: its depth of struct nesting, counting
+# itself, capped at `_MAXHEIGHT`. Below the cap a nested struct has a smaller height
+# than its holder, so these calls never repeat a caller and callee method pair on
+# one inference stack. Inference could take such a repeat for unbounded recursion,
+# widen the nested field types and cache no frame in between, and then each
+# enclosing level would infer everything below it again, once per call path.
+# Self-referential types, the structs that hold them, and nesting deeper than the
+# cap share the top method, so that widening can come back there. Julia 1.10 stays
+# linear without the wrappers, which would slow its self-referential types, so it
+# calls `make` and `applyeach` directly.
 const _MAXHEIGHT = 32
 
 function _structheight(@nospecialize(T), path::Vector{Any}, memo::IdDict{Any,Int})
@@ -1614,8 +1613,8 @@ for h = 0:_MAXHEIGHT
 end
 
 # Splice each field type as a literal. Normal `make` dispatch remains visible,
-# including exact custom methods; its default path uses the concrete Val token
-# above for Union targets.
+# including exact custom methods; its default path uses `_make`'s concrete
+# `Val{T}` token for Union targets.
 function _fieldmake(j::Int, @nospecialize(ft))
     @static if VERSION >= v"1.11"
         return :(_fieldcall(_heightval(T), f.style, $ft, v, sinktag(f.metadata, $j)))

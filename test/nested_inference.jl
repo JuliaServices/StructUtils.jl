@@ -1,5 +1,4 @@
-# A source shaped like a lazily parsed JSON value: objects and arrays are walked by separate
-# loops that pass String and Int keys, so `make` reaches each nested target by several call paths.
+# A source shaped like JSON.jl's lazy values, with separate object and array loops.
 struct NestedSource
     kind::Symbol
     keys::Vector{String}
@@ -29,7 +28,9 @@ StructUtils.arraylike(::StructUtils.StructStyle, x::NestedSource) = x.kind === :
 StructUtils.lift(::Type{String}, x::NestedSource) = x.leaf
 StructUtils.lift(::Type{Int}, x::NestedSource) = parse(Int, x.leaf)
 
-# Untagged and tagged levels alternate; each holds a vector of the level below next to a Dict.
+# Levels alternate between untagged and tagged, because a tagged struct inside an untagged one
+# is what widens `applyeach` without the sink wrapper. Each level holds a vector of the level
+# below next to a Dict, the shape from #98.
 struct Nested0; s::String; end
 @tags struct Nested1; x::Vector{Nested0} &(name="xs",); m::Dict{String,Int}; end
 struct Nested2; x::Vector{Nested1}; m::Dict{String,Int}; end
@@ -42,12 +43,10 @@ struct Nested4; x::Vector{Nested3}; m::Dict{String,Int}; end
         "m" => nested_obj("a" => nested_leaf("1")))
     x = StructUtils.make(Nested4, src)
     @test x.m == Dict("a" => 1) && length(x.x) == 1 && isempty(x.x[1].x)
-    # When inference takes a nested field type or struct sink for unbounded recursion, it
-    # widens the call to `make` (e.g. to `Type{<:Dict}`) or `applyeach` (to an abstract
-    # `FieldSink`) and caches no frame between the two nesting levels. On Julia 1.11 and later
-    # that makes the first `make` of a nested target take time exponential in its depth.
-    # Julia 1.10 widens these calls too, but its time stays linear, so StructUtils calls `make`
-    # and `applyeach` directly there and this test checks only the result.
+    # On Julia 1.11 and later, a widened call (a bounded `Type{<:X}` target or an abstract
+    # `FieldSink`) makes the first `make` of a nested target exponential in its depth. On 1.10
+    # StructUtils calls `make` and `applyeach` directly (see `_MAXHEIGHT`) and compile time
+    # stays linear, so there the test checks only the result.
     if VERSION >= v"1.11"
         makes = sinks = 0
         widened = Any[]
