@@ -1558,11 +1558,69 @@ end
     return ex
 end
 
+# On Julia 1.11 and later, a struct's fields and sink reach `make` and `applyeach`
+# through the wrapper method for its height: its depth of struct nesting, counting
+# itself, capped at `_MAXHEIGHT`. Below the cap a nested struct has a smaller height
+# than its holder, so these calls never repeat a caller and callee method pair on
+# one inference stack. Inference could take such a repeat for unbounded recursion,
+# widen the nested field types and cache no frame in between, and then each
+# enclosing level would infer everything below it again, once per call path.
+# Self-referential types, the structs that hold them, and nesting deeper than the
+# cap share the top method, so that widening can come back there. Julia 1.10 stays
+# linear without the wrappers, which would slow its self-referential types, so it
+# calls `make` and `applyeach` directly.
+const _MAXHEIGHT = 32
+
+function _structheight(@nospecialize(T), path::Vector{Any}, memo::IdDict{Any,Int})
+    T isa Type || return 0
+    h = get(memo, T, -1)
+    h >= 0 && return h
+    # a type that holds itself, or whose field types keep growing
+    length(path) >= 4 * _MAXHEIGHT && return _MAXHEIGHT
+    for p in path
+        p === T && return _MAXHEIGHT
+    end
+    push!(path, T)
+    h = 0
+    if T isa Union
+        h = max(_structheight(T.a, path, memo), _structheight(T.b, path, memo))
+    elseif T isa DataType
+        for p in T.parameters
+            h = max(h, _structheight(p, path, memo))
+        end
+        if arraylike(T) || dictlike(T)
+            h = max(h, _structheight(eltype(T), path, memo))
+        elseif isconcretetype(T) && structlike(T)
+            for i = 1:fieldcount(T)
+                h = max(h, _structheight(fieldtype(T, i), path, memo))
+            end
+            h += 1
+        end
+    end
+    pop!(path)
+    h = min(h, _MAXHEIGHT)
+    memo[T] = h
+    return h
+end
+
+_structheight(@nospecialize(T)) = _structheight(T, Any[], IdDict{Any,Int}())
+
+@generated _heightval(::Type{T}) where {T} = Val(_structheight(T))
+
+for h = 0:_MAXHEIGHT
+    @eval @inline _fieldcall(::Val{$h}, style, ::Type{T}, v, tags) where {T} = make(style, T, v, tags)
+    @eval @inline _sinkcall(::Val{$h}, style, sink, source) = applyeach(style, sink, source)
+end
+
 # Splice each field type as a literal. Normal `make` dispatch remains visible,
-# including exact custom methods; its default path uses the concrete Val token
-# above for Union targets.
+# including exact custom methods; its default path uses `_make`'s concrete
+# `Val{T}` token for Union targets.
 function _fieldmake(j::Int, @nospecialize(ft))
-    return :(make(f.style, $ft, v, sinktag(f.metadata, $j)))
+    @static if VERSION >= v"1.11"
+        return :(_fieldcall(_heightval(T), f.style, $ft, v, sinktag(f.metadata, $j)))
+    else
+        return :(make(f.style, $ft, v, sinktag(f.metadata, $j)))
+    end
 end
 
 @generated function applyfield!(f::FieldSink{T}, i::Int, v) where {T}
@@ -1601,7 +1659,11 @@ function fillfields!(style::StructStyle, ::Type{T}, vals, source) where {T}
     tags = _fieldtagtuple(style, T, fieldnamesymbols(T))
     metadata = fieldmetadata(tags)
     cursor = fieldcursor(style, metadata)
-    return applyeach(style, FieldSink{T}(vals, style, metadata, cursor), source)
+    @static if VERSION >= v"1.11"
+        return _sinkcall(_heightval(T), style, FieldSink{T}(vals, style, metadata, cursor), source)
+    else
+        return applyeach(style, FieldSink{T}(vals, style, metadata, cursor), source)
+    end
 end
 
 makenoarg(style, ::Type{T}, source) where {T} = makenoarg(style, initialize(style, T, source), source)
