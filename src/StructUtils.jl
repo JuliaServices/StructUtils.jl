@@ -917,23 +917,7 @@ function applyeach(st::StructStyle, f, x::AbstractDict)
     return defaultstate(st)
 end
 
-@static if VERSION < v"1.10"
-    function _isfieldatomic(t::Type, s::Int)
-        t = Base.unwrap_unionall(t)
-        # TODO: what to do for `Union`?
-        isa(t, DataType) || return false # uncertain
-        ismutabletype(t) || return false # immutable structs are never atomic
-        1 <= s <= length(t.name.names) || return false # OOB reads are not atomic (they always throw)
-        atomicfields = t.name.atomicfields
-        atomicfields === C_NULL && return false
-        s -= 1
-        return unsafe_load(Ptr{UInt32}(atomicfields), 1 + s ÷ 32) & (1 << (s % 32)) != 0
-    end
-else
-    const _isfieldatomic = Base.isfieldatomic
-end
-
-_setfield!(x, i, v) = setfield!(x, i, v, _isfieldatomic(typeof(x), i) ? :sequentially_consistent : :not_atomic)
+_setfield!(x, i, v) = setfield!(x, i, v, Base.isfieldatomic(typeof(x), i) ? :sequentially_consistent : :not_atomic)
 
 keyeq(a::Symbol, b::String) = a === Symbol(b)
 keyeq(a::String, b::Symbol) = Symbol(a) == b
@@ -962,32 +946,20 @@ end
 # helper closure that computes the length of an applyeach source
 # note that it should be used sparingly/carefully since it consumes
 # the source object and we generally want to do a single pass
-if VERSION < v"1.10"
-    mutable struct LengthClosure
-        len::Int
-    end
-    (f::LengthClosure)(_, _) = f.len += 1
-    function applylength(x)
-        lc = LengthClosure(0)
+struct LengthClosure
+    len::Ptr{Int}
+end
+
+(f::LengthClosure)(_, _) = unsafe_store!(f.len, unsafe_load(f.len) + 1)
+
+function applylength(x)
+    ref = Ref(0)
+    GC.@preserve ref begin
+        lc = LengthClosure(Base.unsafe_convert(Ptr{Int}, ref))
         StructUtils.applyeach(lc, x)
-        return lc.len
+        return unsafe_load(lc.len)
     end
-else
-    struct LengthClosure
-        len::Ptr{Int}
-    end
-
-    (f::LengthClosure)(_, _) = unsafe_store!(f.len, unsafe_load(f.len) + 1)
-
-    function applylength(x)
-        ref = Ref(0)
-        GC.@preserve ref begin
-            lc = LengthClosure(Base.unsafe_convert(Ptr{Int}, ref))
-            StructUtils.applyeach(lc, x)
-            return unsafe_load(lc.len)
-        end
-    end
-end # VERSION < v"1.10"
+end
 
 # recursively build up multidimensional array dimensions
 # "[[1.0],[2.0]]" => (1, 2)
