@@ -151,18 +151,23 @@ function parse_struct_def(kind, src, mod, expr)
             # because we'd have a value for each field to pass to new()
             throw(ArgumentError("const fields are not allowed in @noarg structs"))
         end
-        # generate noarg constructor
+        # generate noarg constructor; the instance gets a fresh name so defaults
+        # can use field and global names freely
+        x = gensym("x")
         if @isdefined(T_with_typeparams)
             sig = Expr(:where, Expr(:call, T_with_typeparams), typeparams...)
-            new_expr = Expr(:(=), :x, Expr(:call, Expr(:curly, :new, T_with_typeparams.args[2:end]...)))
+            new_expr = Expr(:(=), x, Expr(:call, Expr(:curly, :new, T_with_typeparams.args[2:end]...)))
         else
             sig = Expr(:call, T)
-            new_expr = :(x = new())
+            new_expr = Expr(:(=), x, :(new()))
         end
-        cexpr = Expr(:function, sig, Expr(:block, src, new_expr))
-        defs = [:(setfield!(x, $(Meta.quot(f.name)), $(f.default), $(f.isatomic ? Meta.quot(:sequentially_consistent) : Meta.quot(:not_atomic)))) for f in fields if f.default !== none]
-        append!(cexpr.args[2].args, defs)
-        push!(cexpr.args[2].args, Expr(:return, :x))
+        defaulted = [f for f in fields if f.default !== none]
+        # convert each default to its field type, as `x.f = default` would
+        sets = Any[Expr(:call, GlobalRef(Core, :setfield!), x, QuoteNode(f.name),
+            Expr(:call, GlobalRef(Base, :convert), Expr(:call, GlobalRef(Core, :fieldtype), Expr(:call, GlobalRef(Core, :typeof), x), QuoteNode(f.name)), f.name),
+            QuoteNode(f.isatomic ? :sequentially_consistent : :not_atomic)) for f in defaulted]
+        body = _letdefaults(Any[Expr(:(=), f.name, f.default) for f in defaulted], Expr(:block, sets...))
+        cexpr = Expr(:function, sig, Expr(:block, src, new_expr, body, Expr(:return, x)))
         # add inner constructor right after field definitions
         push!(expr.args[3].args, cexpr)
         #TODO: should we also generate an all-arg constructor like default struct constructors
@@ -216,22 +221,16 @@ function parse_struct_def(kind, src, mod, expr)
                     if num_args >= 0
                         # constructor takes first num_args fields as arguments
                         sig = Expr(:call, T, (fields[i].name for i in 1:num_args)...)
-                        # build the call to the full constructor
-                        call_args = []
-                        for (i, f) in enumerate(fields)
-                            if i <= num_args
-                                push!(call_args, f.name)
-                            else
-                                push!(call_args, f.default)
-                            end
-                        end
-                        fexpr = Expr(:function, sig, Expr(:block, src, :(return $T($(call_args...)))))
+                        # bind the remaining fields to their defaults, then call the full constructor
+                        bindings = Any[Expr(:(=), f.name, f.default) for f in fields[num_args+1:end]]
+                        call_args = [f.name for f in fields]
+                        fexpr = Expr(:function, sig, Expr(:block, src, _letdefaults(bindings, :(return $T($(call_args...))))))
                         push!(ret.args, fexpr)
                         
                         # also generate version with type parameters if applicable
                         if @isdefined(T_with_typeparams)
                             sig_tp = Expr(:where, Expr(:call, T_with_typeparams, (fields[i].name for i in 1:num_args)...), typeparams...)
-                            fexpr_tp = Expr(:function, sig_tp, Expr(:block, src, :(return $T_with_typeparams($(call_args...)))))
+                            fexpr_tp = Expr(:function, sig_tp, Expr(:block, src, _letdefaults(bindings, :(return $T_with_typeparams($(call_args...))))))
                             push!(ret.args, fexpr_tp)
                         end
                     end
@@ -250,37 +249,35 @@ _references_typeparam(s::Symbol, names::Vector{Symbol}) = s in names
 _references_typeparam(ex::Expr, names::Vector{Symbol}) =
     any(arg -> _references_typeparam(arg, names), ex.args)
 
+# Bind each field to its default in one `let`, so a default sees the fields bound
+# before it, as keyword-argument defaults do, and can still name a global that its own
+# field shadows (`pi::Float64 = pi`).
+_letdefaults(bindings::Vector{Any}, body) =
+    isempty(bindings) ? body : Expr(:let, Expr(:block, bindings...), body)
+
 # Build the body of the 2-arg fielddefaults: evaluate default expressions in
 # order (so later ones can reference earlier ones), then return a NamedTuple.
 function _fielddefaults_body_2arg(fields_with_defaults)
-    body = Expr(:block)
-    for f in fields_with_defaults
-        push!(body.args, Expr(:(=), f.name, f.default))
-    end
+    bindings = Any[Expr(:(=), f.name, f.default) for f in fields_with_defaults]
     defs_nt = Expr(:tuple, Expr(:parameters, [:(($(f.name)=$(f.name))) for f in fields_with_defaults]...))
-    push!(body.args, Expr(:return, defs_nt))
-    return body
+    return _letdefaults(bindings, Expr(:return, defs_nt))
 end
 
-# Build the body of the 3-arg fielddefaults: evaluate ALL fields in order,
-# preferring `vals[i]` when assigned. Type assertions on `vals[i]` are emitted
-# when a field's type is known (for trim safety on computed defaults), but
-# skipped when the type references a struct type parameter that isn't bound
-# by the method's signature (the unparameterized method).
-function _fielddefaults_body_3arg(fields, fields_with_defaults, typeparam_names::Vector{Symbol})
-    body = Expr(:block)
+# Build the body of the 3-arg fielddefaults, whose values argument is the symbol `vals`:
+# evaluate ALL fields in order, preferring `vals[i]` when assigned. Type assertions on
+# `vals[i]` are emitted when a field's type is known (for trim safety on computed
+# defaults), but skipped when the type references a struct type parameter that isn't
+# bound by the method's signature (the unparameterized method).
+function _fielddefaults_body_3arg(vals::Symbol, fields, fields_with_defaults, typeparam_names::Vector{Symbol})
+    bindings = Any[]
     for (i, f) in enumerate(fields)
         skip_assert = f.type === none || _references_typeparam(f.type, typeparam_names)
-        val_expr = skip_assert ? :(vals[$i]) : :(vals[$i]::$(f.type))
-        if f.default !== none
-            push!(body.args, Expr(:(=), f.name, :(isassigned(vals, $i) ? $val_expr : $(f.default))))
-        else
-            push!(body.args, Expr(:(=), f.name, :(isassigned(vals, $i) ? $val_expr : nothing)))
-        end
+        val_expr = skip_assert ? :($vals[$i]) : :($vals[$i]::$(f.type))
+        fallback = f.default !== none ? f.default : nothing
+        push!(bindings, Expr(:(=), f.name, :(isassigned($vals, $i) ? $val_expr : $fallback)))
     end
     defs_nt = Expr(:tuple, Expr(:parameters, [:(($(f.name)=$(f.name))) for f in fields_with_defaults]...))
-    push!(body.args, Expr(:return, defs_nt))
-    return body
+    return _letdefaults(bindings, Expr(:return, defs_nt))
 end
 
 function generate_field_defaults_and_tags!(ret, T, fields, typeparam_names::Vector{Symbol}=Symbol[], typeparams::Vector=Any[])
@@ -296,13 +293,15 @@ function generate_field_defaults_and_tags!(ret, T, fields, typeparam_names::Vect
             body_2))
         # 3-arg unparameterized: fielddefaults(::StructStyle, ::Type{<:T}, vals).
         # Skip type assertions whose field type references a struct type parameter,
-        # since this signature does not bind the parameters.
-        body_3 = _fielddefaults_body_3arg(fields, fields_with_defaults, typeparam_names)
+        # since this signature does not bind the parameters. The values argument gets
+        # a fresh name so a field named `vals` cannot shadow it.
+        vals = gensym("vals")
+        body_3 = _fielddefaults_body_3arg(vals, fields, fields_with_defaults, typeparam_names)
         push!(ret.args, Expr(:(=),
             Expr(:call, GlobalRef(StructUtils, :fielddefaults),
                 Expr(:(::), GlobalRef(StructUtils, :StructStyle)),
                 Expr(:(::), Expr(:curly, :Type, Expr(:(<:), T))),
-                :vals),
+                vals),
             body_3))
         # For parametric structs, also emit parameterized methods that bind the
         # type parameters in scope. They are more specific than the
@@ -324,13 +323,13 @@ function generate_field_defaults_and_tags!(ret, T, fields, typeparam_names::Vect
             # In the parameterized 3-arg method, type parameters are bound, so we
             # don't need to skip type assertions referencing them; pass an empty
             # typeparam_names vector to retain assertions for trim safety.
-            body_3p = _fielddefaults_body_3arg(fields, fields_with_defaults, Symbol[])
+            body_3p = _fielddefaults_body_3arg(vals, fields, fields_with_defaults, Symbol[])
             push!(ret.args, Expr(:(=),
                 Expr(:where,
                     Expr(:call, GlobalRef(StructUtils, :fielddefaults),
                         Expr(:(::), GlobalRef(StructUtils, :StructStyle)),
                         Expr(:(::), Expr(:curly, :Type, Expr(:(<:), T_curly))),
-                        :vals),
+                        vals),
                     typeparams...),
                 body_3p))
         end
@@ -400,6 +399,8 @@ function Foo()
     return x
 end
 ```
+Each default is converted to its field type, and may use the defaults of the fields
+before it.
 """
 macro noarg(expr)
     parse_struct_def(:noarg, __source__, __module__, expr)
@@ -468,6 +469,7 @@ function Foo(a)
     return Foo(a, "foo", 1.0, [1, 2, 3])
 end
 ```
+A default may use the values of the fields before it, as with `Base.@kwdef`.
 """
 macro defaults(expr)
     parse_struct_def(:defaults, __source__, __module__, expr)
