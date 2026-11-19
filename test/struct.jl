@@ -358,6 +358,23 @@ struct AbsentNothing
     b::Union{Nothing,String}
 end
 
+# Defaults whose literal type differs from the field type.
+@defaults struct ConvertedDefaults
+    a::Int
+    b::Float64 = 1
+    c::Vector{Float64} = [1, 2]
+    d::Union{Nothing,Float64} = 3
+end
+@kwarg struct ConvertedParamDefault{T}
+    a::T = 1
+end
+@kwarg mutable struct ConvertedMutableDefault
+    a::Float64 = 1
+end
+# A style that declares a default for one field of a NamedTuple target.
+struct NamedTupleDefaultStyle <: StructUtils.StructStyle end
+StructUtils.fielddefaults(::NamedTupleDefaultStyle, ::Type{NamedTuple{(:a, :b),Tuple{Int,Int}}}) = (b=2,)
+
 # A style-first `applyeach` overload, as a package defines for its own types.
 struct PinStyle <: StructUtils.StructStyle end
 struct Pinned

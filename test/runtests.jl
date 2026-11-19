@@ -779,6 +779,19 @@ end
     @test_throws ArgumentError StructUtils.make(Tuple{Int,String}, [1])
 end
 
+@testset "absent fields take their declared default, converted to the field type" begin
+    x = StructUtils.make(ConvertedDefaults, Dict("a" => 1))
+    @test x.b === 1.0
+    @test x.c isa Vector{Float64} && x.c == [1.0, 2.0]
+    @test x.d === 3.0
+    @test StructUtils.make(ConvertedParamDefault{Float64}, Dict()) == ConvertedParamDefault{Float64}(1.0)
+    m = ConvertedMutableDefault(a=5.0)
+    @test StructUtils.reset!(m).a === 1.0
+    NT = NamedTuple{(:a, :b),Tuple{Int,Int}}
+    @test StructUtils.make(NT, Dict("a" => 9), NamedTupleDefaultStyle()) == (a=9, b=2)
+    @test_throws ArgumentError StructUtils.make(NT, Dict("b" => 9), NamedTupleDefaultStyle())
+end
+
 @testset "applyeach lowers every key and index" begin
     keys(x) = (ks = Any[]; StructUtils.applyeach(StringKeyStyle(), (k, v) -> push!(ks, k), x); ks)
     @test keys([10, 20]) == ["1", "2"]
