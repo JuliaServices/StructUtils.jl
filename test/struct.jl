@@ -405,10 +405,11 @@ end
     a::Int
     b::Int = a + 1
 end
-# A field left undefined that has a declared default.
+# Fields left undefined, one with a declared default and one without.
 mutable struct UndefWithDefault
     a::Int
     b::String
+    c::String
     UndefWithDefault() = new()
 end
 StructUtils.fielddefaults(::StructUtils.StructStyle, ::Type{UndefWithDefault}) = (b="dflt",)

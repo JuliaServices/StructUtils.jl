@@ -798,7 +798,7 @@ end
     @test StructUtils.make(Dict{String,Any}, DependentDefault(a=1)) == Dict("a" => 1, "b" => 2)
     u = UndefWithDefault()
     u.a = 1
-    @test pairs(u) == [:a => 1, :b => "dflt"]
+    @test pairs(u) == [:a => 1, :b => "dflt", :c => nothing]
 end
 
 @testset "union-typed fields and elements reach f one member at a time" begin
