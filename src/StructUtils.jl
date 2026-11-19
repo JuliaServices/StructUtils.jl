@@ -677,7 +677,8 @@ end
 function lift(st::StructStyle, ::Type{T}, x, tags) where {T}
     if haskey(tags, :lift)
         return tags.lift(x), defaultstate(st)
-    elseif T <: Dates.TimeType && haskey(tags, :dateformat)
+    # a `dateformat` describes the text form, so a source that is already a date lifts as usual
+    elseif T <: Dates.TimeType && x isa AbstractString && haskey(tags, :dateformat)
         if tags.dateformat isa String
             return parse(T, x, Dates.DateFormat(tags.dateformat)), defaultstate(st)
         else

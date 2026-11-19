@@ -622,6 +622,12 @@ end
     @test x[2].val == [2.0, 3.0]
 end
 
+@testset "dateformat tags parse strings and keep date values" begin
+    @test StructUtils.make(FormattedDate, Dict("d" => "2000/01/02")) == FormattedDate(Date(2000, 1, 2))
+    @test StructUtils.make(FormattedDate, (d=Date(2000, 1, 2),)) == FormattedDate(Date(2000, 1, 2))
+    @test StructUtils.make(Dict{String,Any}, FormattedDate(Date(2000, 1, 2))) == Dict("d" => "2000/01/02")
+end
+
 @testset "BigInt/BigFloat structlike" begin
     # BigInt and BigFloat are mutable structs in Julia, but should be treated
     # as non-struct types for serialization purposes (JuliaIO/JSON.jl#424)
