@@ -920,7 +920,7 @@ end
 _setfield!(x, i, v) = setfield!(x, i, v, Base.isfieldatomic(typeof(x), i) ? :sequentially_consistent : :not_atomic)
 
 keyeq(a::Symbol, b::String) = a === Symbol(b)
-keyeq(a::String, b::Symbol) = Symbol(a) == b
+keyeq(a::AbstractString, b::Symbol) = symbolnameeq(b, a)
 keyeq(a, b::String) = string(a) == b
 keyeq(a::AbstractString, b::String) = String(a) == b
 keyeq(a, b::Tuple) = any(keyeq(a), b)
