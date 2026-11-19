@@ -489,4 +489,41 @@ end
         @test Issue54D{3}((1, 2, 3)) == Issue54D{3}((1, 2, 3), (0, 0, 0))
     end
 
+    @testset "defaults evaluate in field order, in their own scope" begin
+        # a default may use the defaults of the fields before it
+        @defaults struct OrderedDefaults
+            a::Int
+            b::String = "x"
+            c::String = b * "y"
+        end
+        @test OrderedDefaults(1) == OrderedDefaults(1, "x", "xy")
+        @test OrderedDefaults(1, "q") == OrderedDefaults(1, "q", "qy")
+        @noarg mutable struct OrderedNoArg
+            x::Int = 1
+            y::Int = x + 1
+        end
+        @test (OrderedNoArg().x, OrderedNoArg().y) == (1, 2)
+        # @noarg converts a default to its field type, like `x.f = default`
+        @noarg mutable struct ConvertingNoArg{T}
+            a::Float64 = 1
+            b::T = 2
+        end
+        n = ConvertingNoArg{Float64}()
+        @test n.a === 1.0
+        @test n.b === 2.0
+        # a default may name a global that its own field shadows
+        @defaults struct ShadowedGlobal
+            a::Int
+            eps::Float64 = eps()
+        end
+        @test ShadowedGlobal(1).eps == eps()
+        @test StructUtils.make(ShadowedGlobal, Dict("a" => 1)).eps == eps()
+        # a field named `vals` does not replace the values fielddefaults reads
+        @kwarg struct ValsField
+            vals::Vector{Int}
+            n::Int = length(vals)
+        end
+        @test StructUtils.make(ValsField, Dict("vals" => [1, 2, 3])).n == 3
+    end
+
 end # @testset "macros"
