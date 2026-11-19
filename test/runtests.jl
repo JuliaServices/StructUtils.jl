@@ -792,6 +792,12 @@ end
     @test keys(Dict(:a => 1)) == ["a"]
 end
 
+@testset "dateformat tags parse strings and keep date values" begin
+    @test StructUtils.make(FormattedDate, Dict("d" => "2000/01/02")) == FormattedDate(Date(2000, 1, 2))
+    @test StructUtils.make(FormattedDate, (d=Date(2000, 1, 2),)) == FormattedDate(Date(2000, 1, 2))
+    @test StructUtils.make(Dict{String,Any}, FormattedDate(Date(2000, 1, 2))) == Dict("d" => "2000/01/02")
+end
+
 @testset "union-typed fields and elements reach f one member at a time" begin
     seen(x) = (vs = Any[]; StructUtils.applyeach(StructUtils.DefaultStyle(), (k, v) -> push!(vs, v), x); vs)
     @test seen(WideUnion(1)) == [1]

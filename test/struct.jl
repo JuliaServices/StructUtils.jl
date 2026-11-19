@@ -399,3 +399,8 @@ end
 struct IntOrColor
     x::Union{Int,UnionColor,Date}
 end
+
+# A date field whose wire form follows a format.
+@tags struct FormattedDate
+    d::Date &(dateformat="yyyy/mm/dd",)
+end
