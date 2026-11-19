@@ -404,6 +404,24 @@ end
     @test size(StructUtils.make(Matrix{Int}, Any[Any[]])) == (0, 1)
 end
 
+@testset "multidimensional make from a source of another shape" begin
+    # ragged arrays, and values where nested arrays belong, have no matrix to fill;
+    # they used to come back as a Vector or with unfilled (uninitialized) elements
+    @test_throws DimensionMismatch StructUtils.make(Matrix{Int}, [[1, 2], [3]])
+    @test_throws DimensionMismatch StructUtils.make(Matrix{Int}, Any[[1], Int[]])
+    @test_throws DimensionMismatch StructUtils.make(Matrix{Int}, [[1], [2, 3]])
+    @test_throws DimensionMismatch StructUtils.make(Matrix{Int}, Any[[1, 2], 3])
+    @test_throws DimensionMismatch StructUtils.make(Matrix{Int}, [1, 2])
+    @test_throws DimensionMismatch StructUtils.make(Matrix{Int}, "a")
+    @test_throws DimensionMismatch StructUtils.make(Matrix{String}, [["a", "b"], ["c"]])
+    @test_throws DimensionMismatch StructUtils.make(Array{Int,3}, [[[1, 2], [3, 4]], [[5, 6]]])
+    @test_throws DimensionMismatch StructUtils.make(Array{Int,3}, [[[1, 2], [3, 4]], [[5, 6], [7]]])
+    @test_throws DimensionMismatch StructUtils.make!(zeros(Int, 2, 2), [[1, 2], [3]])
+    m = zeros(Int, 2, 2)
+    StructUtils.make!(m, [[1, 2], [3, 4]])
+    @test m == [1 3; 2 4]
+end
+
 @testset "multidimensional make" begin
     # 2D Int matrix from nested vectors
     x2 = StructUtils.make(Matrix{Int}, [[1, 3], [2, 4]])
