@@ -676,6 +676,15 @@ end
     @test StructUtils.make(Rational{Int}, (num=3, den=4)) == 3//4
 end
 
+@testset "string keys match a Symbol name without making a Symbol" begin
+    @test StructUtils.make(SymbolNamed, Dict("A" => 1)) == SymbolNamed(1)
+    @test StructUtils.make(SymbolNamed, Dict(SubString("xA", 2) => 1)) == SymbolNamed(1)
+    # an unknown key is compared without creating a Symbol (Symbols are never freed)
+    unknown_key = "Z" * uppercase(string(rand(UInt128); base=36))
+    @test StructUtils.make(SymbolNamed, Dict(unknown_key => 1)) == SymbolNamed(0)
+    @test ccall(:jl_symbol_lookup, Ptr{Cvoid}, (Cstring,), unknown_key) == C_NULL
+end
+
 @testset "keyeq with Tuple" begin
     # Test basic tuple functionality
     @test StructUtils.keyeq(:a, ("a", "b", "c"))
