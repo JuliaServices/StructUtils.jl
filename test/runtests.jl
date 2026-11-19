@@ -805,6 +805,15 @@ end
     @test keys(Dict(:a => 1)) == ["a"]
 end
 
+@testset "applyeach reads defaults only for undefined fields" begin
+    pairs(x) = (ps = Pair{Symbol,Any}[]; StructUtils.applyeach((k, v) -> push!(ps, k => v), x); ps)
+    @test pairs(DependentDefault(a=1)) == [:a => 1, :b => 2]
+    @test StructUtils.make(Dict{String,Any}, DependentDefault(a=1)) == Dict("a" => 1, "b" => 2)
+    u = UndefWithDefault()
+    u.a = 1
+    @test pairs(u) == [:a => 1, :b => "dflt", :c => nothing]
+end
+
 @testset "union-typed fields and elements reach f one member at a time" begin
     seen(x) = (vs = Any[]; StructUtils.applyeach(StructUtils.DefaultStyle(), (k, v) -> push!(vs, v), x); vs)
     @test seen(WideUnion(1)) == [1]
