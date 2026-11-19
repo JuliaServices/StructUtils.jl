@@ -353,6 +353,11 @@ struct CentiHolder
 end
 Base.:(==)(a::CentiHolder, b::CentiHolder) = a.x == b.x
 
+# A field renamed with a Symbol.
+@tags struct SymbolNamed
+    a::Int = 0 &(name=:A,)
+end
+
 # Absent keys for fields whose type admits `missing` or `nothing`.
 struct AbsentMissing
     a::Int
