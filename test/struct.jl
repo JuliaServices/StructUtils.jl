@@ -399,3 +399,16 @@ end
 struct IntOrColor
     x::Union{Int,UnionColor,Date}
 end
+
+# A default computed from another field's value.
+@kwarg struct DependentDefault
+    a::Int
+    b::Int = a + 1
+end
+# A field left undefined that has a declared default.
+mutable struct UndefWithDefault
+    a::Int
+    b::String
+    UndefWithDefault() = new()
+end
+StructUtils.fielddefaults(::StructUtils.StructStyle, ::Type{UndefWithDefault}) = (b="dflt",)
