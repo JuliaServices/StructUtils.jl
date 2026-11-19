@@ -968,15 +968,16 @@ end
 # "[[[1.0],[2.0]]]" => (1, 2, 1)
 # "[[[1.0,2.0]]]" => (2, 1, 1)
 # length of innermost array is 1st dim
+# each dimension is measured on the first array at its level; `MultiDimClosure` checks the rest
 function discover_dims(style, x, ndims::Int)
-    @assert arraylike(style, x)
+    arraylike(style, x) || notarray(ndims)
     len = applylength(x)
     if ndims == 1
         return (len,)
     end
 
     ret = applyeach(x) do _, v
-        return arraylike(style, v) ? EarlyReturn(discover_dims(style, v, ndims - 1)) : EarlyReturn(())
+        return EarlyReturn(discover_dims(style, v, ndims - 1))
     end
     # an empty array has no element to measure, so its inner dimensions are empty too
     ret isa EarlyReturn || return (ntuple(_ -> 0, ndims - 1)..., len)
@@ -1009,6 +1010,12 @@ if VERSION >= v"1.11"
         Base.wrap(Array, Base.memoryref(mem), dims)
 end
 
+@noinline notarray(d::Int) = throw(DimensionMismatch(string(
+    "multidimensional array source: expected an array for dimension ", d, ", got another value")))
+@noinline ragged(d::Int, n::Int) = throw(DimensionMismatch(string(
+    "multidimensional array source: an array for dimension ", d, " has a length other than ", n)))
+
+# `dims` holds the index being filled in each dimension
 struct MultiDimClosure{S,A}
     style::S
     arr::A
@@ -1016,16 +1023,30 @@ struct MultiDimClosure{S,A}
     cur_dim::Base.RefValue{Int}
 end
 
-function (f::MultiDimClosure{S,A})(i::Int, val) where {S,A}
-    f.dims[f.cur_dim[]] = i
-    if arraylike(f.style, val) && f.cur_dim[] > 1
-        f.cur_dim[] -= 1
+function (f::MultiDimClosure{S,A})(::Int, val) where {S,A}
+    d = f.cur_dim[]
+    i = f.dims[d] += 1
+    i <= size(f.arr, d) || ragged(d, size(f.arr, d))
+    if d > 1
+        arraylike(f.style, val) || notarray(d - 1)
+        f.dims[d - 1] = 0
+        f.cur_dim[] = d - 1
         st = applyeach(f.style, f, val)
-        f.cur_dim[] += 1
+        f.cur_dim[] = d
+        f.dims[d - 1] == size(f.arr, d - 1) || ragged(d - 1, size(f.arr, d - 1))
     else
         val, st = make(f.style, eltype(f.arr), val)
         setindex!(f.arr, val, f.dims...)
     end
+    return st
+end
+
+# fill the multidimensional `arr` from `source`'s nested arrays, which must match its shape
+function fillmultidim!(style, arr, source)
+    n = ndims(arr)
+    f = MultiDimClosure(style, arr, zeros(Int, n), Ref(n))
+    st = applyeach(style, f, source)
+    f.dims[n] == size(arr, n) || ragged(n, size(arr, n))
     return st
 end
 
@@ -1365,8 +1386,7 @@ function makearray(style, ::Type{T}, source) where {T}
         end
         N = length(dims)
         if N > 1
-            buf = reshape(data, dims)
-            st = applyeach(style, MultiDimClosure(style, buf, ones(Int, N), Ref(N)), source)
+            st = fillmultidim!(style, reshape(data, dims), source)
         else
             idx = Ref(1)
             st = applyeach(style, FixedArrayClosure(data, style, idx), source)
@@ -1381,9 +1401,7 @@ end
 function makearray(style, x::T, source) where {T}
     if !(T <: AbstractSet) && ndims(T) > 1
         # multidimensional arrays
-        n = ndims(T)
-        st = applyeach(style, MultiDimClosure(style, x, ones(Int, n), Ref(n)), source)
-        return x, st
+        return x, fillmultidim!(style, x, source)
     else
         st = applyeach(style, ArrayClosure(x, style), source)
         return x, st
