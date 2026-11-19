@@ -1248,20 +1248,21 @@ else
     mem(n) = Memory{Any}(undef, n)
 end
 
-# The value for a field the source did not supply: its declared default, else the null
-# its type admits (`nothing` first, so `Union{Missing,Nothing,T}` matches `lift`), else an
-# error naming the field. The message holds no type, so it is safe under `juliac --trim`.
+# The value for a field the source did not supply: its declared default converted to the
+# field type, as the type's constructor converts it, else the null its type admits
+# (`nothing` first, so `Union{Missing,Nothing,T}` matches `lift`), else an error naming the
+# field. The message holds no type, so it is safe under `juliac --trim`.
 @noinline _absentfield_error(name) =
     throw(ArgumentError(string("field `", name, "` has no default and is absent from the source")))
 @inline function _absentfield(default, ::Type{FT}, name) where {FT}
-    default === nothing || return default
+    default === nothing || return convert(FT, default)
     Nothing <: FT && return nothing
     Missing <: FT && return missing
     return _absentfield_error(name)
 end
 
 macro _t(i, name)
-    esc(:(isassigned(vals, $i) ? @inbounds(vals[$i])::fieldtype(T, $i) : _absentfield(fielddefault(style, T, $i), fieldtype(T, $i), $name)::fieldtype(T, $i)))
+    esc(:(isassigned(vals, $i) ? @inbounds(vals[$i])::fieldtype(T, $i) : _absentfield(fielddefault(style, T, $name), fieldtype(T, $i), $name)::fieldtype(T, $i)))
 end
 
 @generated function _tuple(::Type{T}, vals, style) where {T}
@@ -1727,7 +1728,7 @@ function reset!(x::T; style::StructStyle=DefaultStyle()) where {T}
             fname = Meta.quot(fieldname(T, i))
             push!(ex.args, quote
                 if haskey(defs, $fname)
-                    _setfield!(x, $i, defs[$fname])
+                    _setfield!(x, $i, convert(fieldtype(T, $i), defs[$fname]))
                 end
             end)
         end
@@ -1738,7 +1739,7 @@ function reset!(x::T; style::StructStyle=DefaultStyle()) where {T}
         for i = 1:fieldcount(T)
             fname = fieldname(T, i)
             if haskey(defs, fname)
-                _setfield!(x, i, defs[fname])
+                _setfield!(x, i, convert(fieldtype(T, i), defs[fname]))
             end
         end
         return x
