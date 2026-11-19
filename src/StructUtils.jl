@@ -856,12 +856,12 @@ function applyeach(st::StructStyle, f, x::Union{AbstractSet,Base.Generator,Core.
 end
 
 # generic definition for Tuple, NamedTuple, structs
+# Defaults are read only for an undefined field: `fielddefaults(st, T)` cannot see the
+# struct's values, so a default computed from another field cannot be evaluated there.
 function applyeach(st::StructStyle, f, x::T) where {T}
     if @generated
         N = fieldcount(T)
-        ex = quote
-            defs = fielddefaults(st, T)
-        end
+        ex = Expr(:block)
         keyex = :(lowerkey(st, fname))
         for i = 1:N
             fname = Meta.quot(fieldname(T, i))
@@ -874,12 +874,13 @@ function applyeach(st::StructStyle, f, x::T) where {T}
                     fname = get(ftags, :name, $fname)
                     ret = if isdefined(x, $i)
                         $valex
-                    elseif haskey(defs, $fname)
-                        # this branch should be really rare because we should
-                        # have applied a field default in the struct constructor
-                        f($keyex, lower(st, defs[$fname], ftags))
                     else
-                        f($keyex, lower(st, nothing, ftags))
+                        defs = fielddefaults(st, T)
+                        if haskey(defs, $fname)
+                            f($keyex, lower(st, defs[$fname], ftags))
+                        else
+                            f($keyex, lower(st, nothing, ftags))
+                        end
                     end
                     ret isa EarlyReturn && return ret
                 end
@@ -888,19 +889,20 @@ function applyeach(st::StructStyle, f, x::T) where {T}
         push!(ex.args, :(return defaultstate(st)))
         return ex
     else
-        defs = fielddefaults(st, T)
         for i = 1:fieldcount(T)
             fname = fieldname(T, i)
             ftags = fieldtags(st, T, fname)
             if !haskey(ftags, :ignore) || !ftags.ignore
-                fname = get(ftags, :name, fname)
-                key = lowerkey(st, fname)
+                key = lowerkey(st, get(ftags, :name, fname))
                 ret = if isdefined(x, i)
                     f(key, lower(st, getfield(x, i), ftags))
-                elseif haskey(defs, fname)
-                    f(key, lower(st, defs[fname], ftags))
                 else
-                    f(key, lower(st, nothing, ftags))
+                    defs = fielddefaults(st, T)
+                    if haskey(defs, fname)
+                        f(key, lower(st, defs[fname], ftags))
+                    else
+                        f(key, lower(st, nothing, ftags))
+                    end
                 end
                 ret isa EarlyReturn && return ret
             end
